@@ -29,14 +29,13 @@ import {
   ShieldAlert,
   Folder,
   FolderPlus,
-  ChevronRightSquare,
   Edit3,
   Undo
 } from "lucide-react";
 
-// Replace with your real Supabase Project URL. If empty, the app gracefully switches to robust LocalStorage fallback.
-const SUPABASE_URL = "https://YOUR_SUPABASE_PROJECT_URL.supabase.co"; 
-const SUPABASE_ANON_KEY = "sb_publishable_FOHScr8kuoi9a4pKd9ybeQ_vn7ZEKUb";
+// ⚠️ REPLACE THESE WITH YOUR ACTUAL SUPABASE SECURE VALUES ONCE READY!
+const SUPABASE_URL = "https://gsdznfgulncjyjmkqofs.supabase.co/rest/v1/"; 
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzZHpuZmd1bG5janlqbWtxb2ZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExODM5NTgsImV4cCI6MjA5Njc1OTk1OH0.B2RRwWa73TR15zAp-Fh34UX6a47g1VI3_0COPhYp_lo";
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -47,7 +46,7 @@ export default function App() {
   const [quizzes, setQuizzes] = useState([]);
   const [groups, setGroups] = useState([]);
   const [quizStates, setQuizStates] = useState({});
-  const [currentGroupId, setCurrentGroupId] = useState(null); // null represents root directory
+  const [currentGroupId, setCurrentGroupId] = useState(null); 
 
   // Administrative Access state control
   const [isAdmin, setIsAdmin] = useState(() => {
@@ -65,7 +64,7 @@ export default function App() {
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editGroupName, setEditGroupName] = useState('');
 
-  const [currentView, setCurrentView] = useState('dashboard'); // dashboard, add_quiz, prompt, taking_quiz, review
+  const [currentView, setCurrentView] = useState('dashboard'); 
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState({});
@@ -79,7 +78,7 @@ export default function App() {
   const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
   const supabaseRef = useRef(null);
 
-  // Safe browser warning alternatives to confirm()
+  // Safe native-style confirmation modal
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: '',
@@ -102,6 +101,7 @@ export default function App() {
         if (window.supabase) {
           initializeClient();
         } else {
+          console.log("Loading Supabase SDK via CDN...");
           const script = document.createElement('script');
           script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
           script.async = true;
@@ -113,6 +113,7 @@ export default function App() {
           document.head.appendChild(script);
         }
       } else {
+        console.log("Supabase URL placeholder detected. Running in LocalStorage fallback mode.");
         setIsSupabaseLoaded(false);
       }
     };
@@ -122,6 +123,7 @@ export default function App() {
         if (window.supabase) {
           supabaseRef.current = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
           setIsSupabaseLoaded(true);
+          console.log("Supabase connection successfully established!");
         }
       } catch (e) {
         console.warn("Supabase dynamic integration failed. Using LocalStorage instead.", e);
@@ -140,7 +142,6 @@ export default function App() {
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
-        // Fetch groups
         const { data: fetchedGroups, error: groupErr } = await supabaseRef.current
           .from('groups')
           .select('*')
@@ -148,7 +149,6 @@ export default function App() {
         if (groupErr) throw groupErr;
         setGroups(fetchedGroups || []);
 
-        // Fetch quizzes
         const { data: fetchedQuizzes, error: quizErr } = await supabaseRef.current
           .from('quizzes')
           .select('*')
@@ -156,7 +156,6 @@ export default function App() {
         if (quizErr) throw quizErr;
         setQuizzes(fetchedQuizzes || []);
 
-        // Fetch user progress states
         const { data: progress, error: progErr } = await supabaseRef.current
           .from('user_progress')
           .select('*')
@@ -1192,7 +1191,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   btnClass += "border-slate-200 dark:border-slate-700 dark:bg-slate-800/50 bg-white dark:text-slate-300 text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-indigo-300 dark:hover:border-indigo-600 cursor-pointer shadow-sm";
                 } else {
                   if (isCorrectOption) {
-                    btnClass += "border-emerald-500 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300 shadow-sm"; 
+                    btnClass += "border-emerald-500 dark:border-emerald-600 bg-emerald-550/10 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300 shadow-sm"; 
                   } else if (isSelected && !isCorrectOption) {
                     btnClass += "border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-900/20 text-rose-800 dark:text-rose-300"; 
                   } else {
@@ -1239,7 +1238,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               <button 
                 onClick={handlePrevQuestion}
                 disabled={currentQuestionIndex === 0}
-                className="w-full sm:w-auto flex justify-center items-center gap-2 px-5 py-2.5 border dark:border-slate-700 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed text-sm font-medium"
+                className="w-full sm:w-auto flex justify-center items-center gap-2 px-5 py-2.5 border dark:border-slate-700 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed text-sm"
               >
                 <ChevronLeft className="w-4 h-4" /> <span>Previous</span>
               </button>
