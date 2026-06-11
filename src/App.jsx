@@ -33,9 +33,7 @@ import {
   Undo
 } from "lucide-react";
 
-// 🛠️ READ FROM ENVIRONMENT VARIABLES (Vite syntax)
-// If you are testing locally, you can create a .env file (explained in the guide).
-// If those are missing, it falls back to the safe, local-only offline mode automatically.
+// Pull credentials from Netlify environment variables (using Vite syntax)
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ""; 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
@@ -253,13 +251,65 @@ export default function App() {
     };
   }, [currentView, activeQuiz, currentQuestionIndex, userAnswers, uncertainQuestions]);
 
-  const aiPrompt = `You are acting as an expert university professor and exam designer...`; // Keep original prompt internally
+  const aiPrompt = `You are acting as an expert university professor and exam designer. 
+
+I have uploaded two types of sources into this notebook:
+1. My Lecture Notes (the specific material I have been taught)
+2. Past Year Questions (PYQs)
+
+Your task is to generate a 20-question Multiple Choice Question (MCQ) practice exam for me. To do this successfully, you must strictly follow these rules:
+
+1. Strict Scope Constraint: Every single question you generate must be based ONLY on concepts explicitly explained in the uploaded Lecture Notes. If a topic appears in the PYQs but is NOT present in the Lecture Notes, you must completely ignore it. Do not test me on anything we haven't covered in these specific lectures.
+2. Format & Style Match: Analyze the provided PYQs to understand the exact formatting, phrasing style, number of options (e.g., A, B, C, D), and difficulty level. The questions you create must perfectly mimic this style.
+3. Mixing Past Questions: You can include or closely adapt actual questions from the PYQs, but again, ONLY if they align with the current Lecture Notes. 
+4. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json), introductory text, or explanatory text outside the JSON block. The program I am using requires pure JSON.
+
+The JSON must exactly follow this schema:
+
+{
+  "quizTitle": "Title of the Quiz Based on Topic",
+  "questions": [
+    {
+      "question": "The question text goes here...",
+      "options": [
+        {
+          "id": "A",
+          "text": "First option text",
+          "isCorrect": false,
+          "explanation": "Detailed explanation of why this specific choice is incorrect."
+        },
+        {
+          "id": "B",
+          "text": "Second option text",
+          "isCorrect": true,
+          "explanation": "Detailed explanation of why this choice is the correct answer."
+        },
+        {
+          "id": "C",
+          "text": "Third option text",
+          "isCorrect": false,
+          "explanation": "Detailed explanation of why this specific choice is incorrect."
+        },
+        {
+          "id": "D",
+          "text": "Fourth option text",
+          "isCorrect": false,
+          "explanation": "Detailed explanation of why this specific choice is incorrect."
+        }
+      ]
+    }
+  ]
+}
+
+Ensure there is a clear, concise explanation for EVERY option (both right and wrong), as these will be revealed to me when I select an answer. Generate the 20 questions now.`;
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    
+    // Create the base group container. DO NOT include "id" as undefined or null for Supabase inserts.
+    // PostgreSQL database needs to automatically assign its gen_random_uuid()!
     const newGroupObj = {
-      id: isSupabaseReady ? undefined : Date.now().toString(),
       name: newGroupName.trim(),
       parent_id: currentGroupId
     };
@@ -276,7 +326,12 @@ export default function App() {
         console.error("Cloud group creation failed:", err);
       }
     } else {
-      const updated = [...groups, { ...newGroupObj, id: Date.now().toString() }];
+      // Local fallback assignments
+      const localIdGroupObj = {
+        ...newGroupObj,
+        id: Date.now().toString()
+      };
+      const updated = [...groups, localIdGroupObj];
       setGroups(updated);
       saveLocalFallback(null, updated, null);
     }
@@ -508,7 +563,7 @@ export default function App() {
     setActiveQuiz(quiz);
     setCurrentQuestionIndex(savedState.currentQuestionIndex || 0);
     setUserAnswers(savedState.userAnswers || {});
-    setUncertainQuestions(savedState.uncertain_questions || {});
+    setUncertainQuestions(savedState.uncertainQuestions || {});
     setCurrentView('taking_quiz');
   };
 
@@ -590,7 +645,7 @@ export default function App() {
 
     setActiveQuiz(quiz);
     setUserAnswers(savedState.userAnswers || {});
-    setUncertainQuestions(savedState.uncertain_questions || {});
+    setUncertainQuestions(savedState.uncertainQuestions || {});
     setCorrectUncertainOpen(false);
     setCurrentView('review');
   };
@@ -715,6 +770,7 @@ export default function App() {
           </div>
         </div>
 
+        {}
         <div className="flex items-center gap-2 mb-6 text-sm text-slate-500 flex-wrap">
           <button 
             onClick={() => setCurrentGroupId(null)}
@@ -784,6 +840,7 @@ export default function App() {
           </div>
         )}
 
+        {}
         <div className="space-y-8">
           {currentLevelGroups.length > 0 && (
             <div className="space-y-4">
@@ -826,6 +883,7 @@ export default function App() {
             </div>
           )}
 
+          {}
           <div className="space-y-4">
             <h3 className="text-lg font-serif dark:text-slate-300 text-slate-700 font-semibold flex items-center gap-2">
               <Library className="w-5 h-5 text-indigo-500" /> Assessments
@@ -1075,6 +1133,7 @@ export default function App() {
             </div>
           </div>
 
+          {}
           <div className="flex gap-2 overflow-x-auto mb-8 pb-3 custom-scrollbar">
             {activeQuiz.questions.map((q, idx) => {
               const ansId = userAnswers[idx];
@@ -1106,7 +1165,7 @@ export default function App() {
                 bgClass = "bg-white dark:bg-slate-800";
                 textClass = "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200";
               } else if (isCorrect) {
-                bgClass = "bg-emerald-555/10 dark:bg-emerald-900/20";
+                bgClass = "bg-emerald-550/10 dark:bg-emerald-900/20";
                 textClass = "text-emerald-700 dark:text-emerald-400";
               } else {
                 bgClass = "bg-rose-50 dark:bg-rose-900/20";
@@ -1128,6 +1187,7 @@ export default function App() {
             })}
           </div>
 
+          {}
           <div className="dark:bg-slate-800 bg-white border dark:border-slate-700 border-slate-200 rounded-xl p-6 md:p-10 shadow-sm relative">
             <h3 className="text-xl md:text-2xl dark:text-slate-100 text-slate-800 font-serif leading-relaxed mb-8">
               {currentQ.question}
@@ -1144,7 +1204,7 @@ export default function App() {
                   btnClass += "border-slate-200 dark:border-slate-700 dark:bg-slate-800/50 bg-white dark:text-slate-300 text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-indigo-300 dark:hover:border-indigo-600 cursor-pointer shadow-sm";
                 } else {
                   if (isCorrectOption) {
-                    btnClass += "border-emerald-500 dark:border-emerald-600 bg-emerald-555/10 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300 shadow-sm"; 
+                    btnClass += "border-emerald-500 dark:border-emerald-600 bg-emerald-550/10 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-300 shadow-sm"; 
                   } else if (isSelected && !isCorrectOption) {
                     btnClass += "border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-900/20 text-rose-800 dark:text-rose-300"; 
                   } else {
@@ -1175,7 +1235,7 @@ export default function App() {
                     {isAnswered && (
                       <div className={`mt-3 p-4 text-sm rounded-lg border-l-4 ml-2 md:ml-4 animate-fade-in ${
                         isCorrectOption 
-                          ? "bg-emerald-555/10 dark:bg-emerald-900/10 border-emerald-500 text-emerald-800 dark:text-emerald-200" 
+                          ? "bg-emerald-550/10 dark:bg-emerald-900/10 border-emerald-500 text-emerald-800 dark:text-emerald-200" 
                           : "bg-rose-50 dark:bg-rose-900/10 border-rose-500 text-rose-800 dark:text-rose-200"
                       }`}>
                         <span className="font-bold block mb-1">{isCorrectOption ? 'Correct:' : 'Incorrect:'}</span>
@@ -1187,6 +1247,7 @@ export default function App() {
               })}
             </div>
 
+            {}
             <div className="mt-10 flex flex-col-reverse sm:flex-row justify-between items-center border-t dark:border-slate-700 border-slate-200 pt-6 gap-4">
               <button 
                 onClick={handlePrevQuestion}
@@ -1219,6 +1280,7 @@ export default function App() {
               </button>
             </div>
 
+            {}
             <div className="mt-8 flex flex-wrap justify-center items-center gap-y-2 gap-x-6 text-xs dark:text-slate-500 text-slate-400 pt-4 hidden md:flex font-medium">
               <div className="flex items-center gap-1.5">
                 <Keyboard className="w-4 h-4" />
@@ -1335,6 +1397,7 @@ export default function App() {
             </div>
           )}
 
+          {}
           <div className="mt-10 dark:bg-slate-800 bg-white border border-amber-200 dark:border-amber-700/50 rounded-xl overflow-hidden shadow-sm">
             <button 
               onClick={() => setCorrectUncertainOpen(!correctUncertainOpen)}
