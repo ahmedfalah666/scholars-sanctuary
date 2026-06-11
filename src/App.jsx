@@ -706,6 +706,8 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         <div className="flex flex-col items-center gap-0.5 text-slate-500">
           <span>Designed & Developed by</span>
           <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider">Ahmed Falah Hasan</span>
+          <span>Inspiration by</span>
+          <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider">Rawan Hussein</span>
         </div>
       </div>
     </footer>
