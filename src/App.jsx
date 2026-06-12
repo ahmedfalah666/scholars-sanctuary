@@ -515,7 +515,7 @@ The JSON must exactly follow this schema:
   const handleOpenMoveModal = (quiz, e) => {
     e.stopPropagation();
     setQuizToMove(quiz);
-    setTargetGroupId(quiz.group_id === null ? 'root' : quiz.group_id);
+    setTargetGroupId(quiz.group_id === null ? 'root' : String(quiz.group_id));
     setShowMoveQuizModal(true);
   };
 
@@ -523,7 +523,12 @@ The JSON must exactly follow this schema:
     if (!quizToMove) return;
     if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
-    const destinationGroupId = targetGroupId === 'root' ? null : targetGroupId;
+    
+    // Coerce numeric string values to true numbers to match PostgreSQL bigint types
+    let destinationGroupId = targetGroupId === 'root' ? null : targetGroupId;
+    if (destinationGroupId !== null && !isNaN(Number(destinationGroupId))) {
+      destinationGroupId = Number(destinationGroupId);
+    }
 
     if (isSupabaseReady) {
       try {
@@ -942,10 +947,10 @@ The JSON must exactly follow this schema:
                 <Sparkles className="w-3.5 h-3.5" /> Portal Operational
               </span>
               <h2 className="text-2xl md:text-3xl font-serif font-bold text-white mb-3 tracking-wide">
-                Welcome to Your Personal Exam Suite
+                Welcome UOBCOM 100 to your personal quiz bank
               </h2>
               <p className="text-slate-300 dark:text-[#EAE3D2] text-sm leading-relaxed mb-6 font-medium">
-                A high-precision testing environment configured for academic excellence. Upload past questions or notes, generate quizzes, and monitor your concept confidence.
+                Your high-fidelity study companion. Take customized mock assessments, pinpoint and immediately review conceptual errors, flag uncertain questions to master key topics, and monitor your overall learning progress.
               </p>
             </div>
           </div>
@@ -1970,7 +1975,7 @@ The JSON must exactly follow this schema:
                 >
                   <option value="root">Home Dashboard (Main Level)</option>
                   {groups.map(g => (
-                    <option key={g.id} value={g.id}>
+                    <option key={g.id} value={String(g.id)}>
                       {getFullBreadcrumbString(g.id)}
                     </option>
                   ))}
