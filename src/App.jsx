@@ -1,4 +1,3 @@
-/* STREAMING_CHUNK: Importing core dependencies... */
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   BookOpen, 
@@ -35,19 +34,18 @@ import {
   Sparkles,
   Award,
   BookMarked,
-  Settings,
-  Save
+  Save,
+  CheckCircle2
 } from "lucide-react";
 
-// Pull credentials from Netlify environment variables (using Vite syntax)
+// Pull credentials from Netlify environment variables
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ""; 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 export default function App() {
-  /* STREAMING_CHUNK: Initializing state variables... */
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem('academicTheme');
-    return savedTheme ? savedTheme : 'light';
+    return savedTheme ? savedTheme : 'dark'; // Defaulting to luxury dark
   });
 
   const [quizzes, setQuizzes] = useState([]);
@@ -71,7 +69,11 @@ export default function App() {
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editGroupName, setEditGroupName] = useState('');
 
-  // View state tracking
+  // Edit Question Modal State
+  const [showEditQuestionModal, setShowEditQuestionModal] = useState(false);
+  const [editingQuestionIndex, setEditingQuestionIndex] = useState(null);
+  const [editedQuestionData, setEditedQuestionData] = useState(null);
+
   const [currentView, setCurrentView] = useState('dashboard'); 
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -82,17 +84,9 @@ export default function App() {
   const [copySuccess, setCopySuccess] = useState('');
   
   const [correctUncertainOpen, setCorrectUncertainOpen] = useState(false);
-
-  // Admin Question Editing State
-  const [showEditQuestionModal, setShowEditQuestionModal] = useState(false);
-  const [editQuestionIndex, setEditQuestionIndex] = useState(null);
-  const [editQuestionText, setEditQuestionText] = useState('');
-  const [editQuestionOptions, setEditQuestionOptions] = useState([]);
-
   const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
   const supabaseRef = useRef(null);
 
-  // Safe native-style confirmation modal
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: '',
@@ -109,26 +103,23 @@ export default function App() {
     return { uid: savedUid };
   });
 
-  /* STREAMING_CHUNK: Dynamically loading database script... */
   useEffect(() => {
     const loadSupabaseScript = () => {
       if (SUPABASE_URL && SUPABASE_URL.trim() !== "") {
         if (window.supabase) {
           initializeClient();
         } else {
-          console.log("Loading Supabase SDK via CDN...");
           const script = document.createElement('script');
           script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
           script.async = true;
           script.onload = initializeClient;
           script.onerror = () => {
-            console.warn("Supabase CDN failed to load. Running in LocalStorage fallback mode.");
+            console.warn("Supabase SDK CDN load failed. Operating in LocalStorage mode.");
             setIsSupabaseLoaded(false);
           };
           document.head.appendChild(script);
         }
       } else {
-        console.log("Supabase URL environment variable is missing. Running in local fallback mode.");
         setIsSupabaseLoaded(false);
       }
     };
@@ -138,10 +129,9 @@ export default function App() {
         if (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY) {
           supabaseRef.current = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
           setIsSupabaseLoaded(true);
-          console.log("Supabase connection successfully established via Environment Variables!");
         }
       } catch (e) {
-        console.warn("Supabase dynamic integration failed. Using LocalStorage instead.", e);
+        console.warn("Supabase integration failed. Falling back to local state.", e);
         setIsSupabaseLoaded(false);
       }
     };
@@ -149,7 +139,6 @@ export default function App() {
     loadSupabaseScript();
   }, []);
 
-  /* STREAMING_CHUNK: Synchronizing remote and local data ... */
   useEffect(() => {
     loadData();
   }, [isSupabaseLoaded]);
@@ -190,7 +179,7 @@ export default function App() {
         setQuizStates(liveStates);
 
       } catch (err) {
-        console.error("Supabase load error, switching to local state:", err);
+        console.error("Supabase load failed, falling back to local storage:", err);
         fallbackToLocal();
       }
     } else {
@@ -218,7 +207,6 @@ export default function App() {
     localStorage.setItem('academicTheme', theme);
   }, [theme]);
 
-  /* STREAMING_CHUNK: Configuring physical key interactions ... */
   useEffect(() => {
     if (currentView !== 'taking_quiz' || !activeQuiz || showEditQuestionModal) return;
 
@@ -231,25 +219,17 @@ export default function App() {
       const selectedOptId = userAnswers[currentQuestionIndex];
       const isAnswered = selectedOptId !== undefined;
 
-      // Selection hotkeys
       if (!isAnswered) {
-        if (e.key === '1' && currentQ.options[0]) {
-          handleOptionSelect(currentQ.options[0].id);
-        } else if (e.key === '2' && currentQ.options[1]) {
-          handleOptionSelect(currentQ.options[1].id);
-        } else if (e.key === '3' && currentQ.options[2]) {
-          handleOptionSelect(currentQ.options[2].id);
-        } else if (e.key === '4' && currentQ.options[3]) {
-          handleOptionSelect(currentQ.options[3].id);
-        }
+        if (e.key === '1' && currentQ.options[0]) handleOptionSelect(currentQ.options[0].id);
+        else if (e.key === '2' && currentQ.options[1]) handleOptionSelect(currentQ.options[1].id);
+        else if (e.key === '3' && currentQ.options[2]) handleOptionSelect(currentQ.options[2].id);
+        else if (e.key === '4' && currentQ.options[3]) handleOptionSelect(currentQ.options[3].id);
       }
 
-      // Uncertainty hotkey mapped to C
       if (e.key === 'c' || e.key === 'C') {
         toggleUncertainty();
       }
 
-      // Navigation hotkeys
       if (e.key === 'ArrowLeft') {
         handlePrevQuestion();
       } else if (e.key === 'ArrowRight') {
@@ -262,12 +242,9 @@ export default function App() {
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentView, activeQuiz, currentQuestionIndex, userAnswers, uncertainQuestions, showEditQuestionModal]);
 
-  /* STREAMING_CHUNK: Formatting AI exam prompt templates ... */
   const aiPrompt = `You are acting as an expert university professor and exam designer. 
 
 I have uploaded two types of sources into this notebook:
@@ -276,10 +253,10 @@ I have uploaded two types of sources into this notebook:
 
 Your task is to generate a 20-question Multiple Choice Question (MCQ) practice exam for me. To do this successfully, you must strictly follow these rules:
 
-1. Strict Scope Constraint: Every single question you generate must be based ONLY on concepts explicitly explained in the uploaded Lecture Notes. If a topic appears in the PYQs but is NOT present in the Lecture Notes, you must completely ignore it. Do not test me on anything we haven't covered in these specific lectures.
-2. Format & Style Match: Analyze the provided PYQs to understand the exact formatting, phrasing style, number of options (e.g., A, B, C, D), and difficulty level. The questions you create must perfectly mimic this style.
+1. Strict Scope Constraint: Every single question you generate must be based ONLY on concepts explicitly explained in the uploaded Lecture Notes. If a topic appears in the PYQs but is NOT present in the Lecture Notes, you must completely ignore it.
+2. Format & Style Match: Analyze the provided PYQs to understand the exact formatting, phrasing style, number of options (e.g., A, B, C, D), and difficulty level.
 3. Mixing Past Questions: You can include or closely adapt actual questions from the PYQs, but again, ONLY if they align with the current Lecture Notes. 
-4. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json), introductory text, or explanatory text outside the JSON block. The program I am using requires pure JSON.
+4. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
 
 The JSON must exactly follow this schema:
 
@@ -293,34 +270,13 @@ The JSON must exactly follow this schema:
           "id": "A",
           "text": "First option text",
           "isCorrect": false,
-          "explanation": "Detailed explanation of why this specific choice is incorrect."
-        },
-        {
-          "id": "B",
-          "text": "Second option text",
-          "isCorrect": true,
-          "explanation": "Detailed explanation of why this choice is the correct answer."
-        },
-        {
-          "id": "C",
-          "text": "Third option text",
-          "isCorrect": false,
-          "explanation": "Detailed explanation of why this specific choice is incorrect."
-        },
-        {
-          "id": "D",
-          "text": "Fourth option text",
-          "isCorrect": false,
-          "explanation": "Detailed explanation of why this specific choice is incorrect."
+          "explanation": "Detailed explanation of why this choice is correct or incorrect."
         }
       ]
     }
   ]
-}
+}`;
 
-Ensure there is a clear, concise explanation for EVERY option (both right and wrong), as these will be revealed to me when I select an answer. Generate the 20 questions now.`;
-
-  /* STREAMING_CHUNK: Managing category and group additions ... */
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
@@ -339,7 +295,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         if (error) throw error;
         setGroups([...groups, ...data]);
       } catch (err) {
-        console.error("Cloud group creation failed:", err);
+        console.error("Cloud category creation failed:", err);
       }
     } else {
       const localIdGroupObj = {
@@ -368,7 +324,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         if (error) throw error;
         setGroups(groups.map(g => g.id === editingGroupId ? { ...g, name: editGroupName.trim() } : g));
       } catch (err) {
-        console.error("Cloud group update failed:", err);
+        console.error("Cloud category update failed:", err);
       }
     } else {
       const updated = groups.map(g => g.id === editingGroupId ? { ...g, name: editGroupName.trim() } : g);
@@ -392,7 +348,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         setGroups(groups.filter(g => g.id !== gId));
         setQuizzes(quizzes.filter(q => q.group_id !== gId));
       } catch (err) {
-        console.error("Cloud group deletion failed:", err);
+        console.error("Cloud folder deletion failed:", err);
       }
     } else {
       const updated = groups.filter(g => g.id !== gId);
@@ -444,7 +400,6 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     setCurrentView('dashboard');
   };
 
-  /* STREAMING_CHUNK: Managing database quiz operations ... */
   const handleAddQuiz = async () => {
     try {
       setErrorMsg('');
@@ -458,7 +413,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
       const parsed = JSON.parse(cleanedInput);
       
       if (!parsed.quizTitle || !parsed.questions || !Array.isArray(parsed.questions)) {
-        throw new Error("Invalid format. Ensure your payload matches the requested schema.");
+        throw new Error("Invalid structure. Please check database configuration matching the JSON format.");
       }
       
       const newQuiz = {
@@ -489,36 +444,33 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     }
   };
 
-  /* STREAMING_CHUNK: Setting up Question Editing functionality ... */
-  const openEditQuestionModal = (idx) => {
-    const q = activeQuiz.questions[idx];
-    setEditQuestionIndex(idx);
-    setEditQuestionText(q.question);
-    // Deep clone options
-    setEditQuestionOptions(JSON.parse(JSON.stringify(q.options)));
+  const openEditQuestionPanel = (qIdx) => {
+    if (!isAdmin) return;
+    const targetQ = activeQuiz.questions[qIdx];
+    setEditingQuestionIndex(qIdx);
+    setEditedQuestionData(JSON.parse(JSON.stringify(targetQ))); // deep copy
     setShowEditQuestionModal(true);
   };
 
   const handleSaveEditedQuestion = async () => {
-    if (!activeQuiz || editQuestionIndex === null) return;
+    if (!editedQuestionData || editingQuestionIndex === null) return;
 
-    // Build updated questions array
+    // Update activeQuiz in local state first
     const updatedQuestions = [...activeQuiz.questions];
-    updatedQuestions[editQuestionIndex] = {
-      ...updatedQuestions[editQuestionIndex],
-      question: editQuestionText,
-      options: editQuestionOptions
-    };
-
+    updatedQuestions[editingQuestionIndex] = editedQuestionData;
+    
     const updatedQuiz = {
       ...activeQuiz,
       questions: updatedQuestions
     };
-
-    // Update state immediately
+    
     setActiveQuiz(updatedQuiz);
-    setQuizzes(quizzes.map(q => q.id === activeQuiz.id ? updatedQuiz : q));
 
+    // Save update to global quiz list
+    const updatedQuizzesList = quizzes.map(q => q.id === activeQuiz.id ? updatedQuiz : q);
+    setQuizzes(updatedQuizzesList);
+
+    // Persist to DB or LocalStorage fallback
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
@@ -528,35 +480,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           .eq('id', activeQuiz.id);
         if (error) throw error;
       } catch (err) {
-        console.error("Cloud question update failed:", err);
+        console.error("Failed to persist edited question to Supabase:", err);
       }
     } else {
-      const localQuizzes = quizzes.map(q => q.id === activeQuiz.id ? updatedQuiz : q);
-      saveLocalFallback(localQuizzes, null, null);
+      saveLocalFallback(updatedQuizzesList, null, null);
     }
 
     setShowEditQuestionModal(false);
-    setEditQuestionIndex(null);
-  };
-
-  const handleEditOptionText = (optIdx, val) => {
-    const nextOpts = [...editQuestionOptions];
-    nextOpts[optIdx].text = val;
-    setEditQuestionOptions(nextOpts);
-  };
-
-  const handleEditOptionExplanation = (optIdx, val) => {
-    const nextOpts = [...editQuestionOptions];
-    nextOpts[optIdx].explanation = val;
-    setEditQuestionOptions(nextOpts);
-  };
-
-  const handleSelectCorrectOption = (optId) => {
-    const nextOpts = editQuestionOptions.map(o => ({
-      ...o,
-      isCorrect: o.id === optId
-    }));
-    setEditQuestionOptions(nextOpts);
+    setEditingQuestionIndex(null);
+    setEditedQuestionData(null);
   };
 
   const deleteQuiz = async (id) => {
@@ -570,7 +502,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         if (error) throw error;
         setQuizzes(quizzes.filter(q => q.id !== id));
       } catch (err) {
-        console.error("Cloud quiz deletion failed:", err);
+        console.error("Failed to delete exam:", err);
       }
     } else {
       const updatedQuizzes = quizzes.filter(q => q.id !== id);
@@ -584,7 +516,6 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     }
   };
 
-  /* STREAMING_CHUNK: Managing persistent assessment states ... */
   const updatePersistentState = async (quizId, updatedProgress) => {
     const nextStates = {
       ...quizStates,
@@ -615,7 +546,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           .upsert(payload, { onConflict: 'user_id, quiz_id' });
         if (error) throw error;
       } catch (err) {
-        console.error("Cloud state synchronizer failed:", err);
+        console.error("Database tracker update mismatch:", err);
       }
     } else {
       saveLocalFallback(null, null, nextStates);
@@ -787,17 +718,16 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     return { incorrect, correctButUncertain };
   };
 
-  /* STREAMING_CHUNK: Setting up elegant footer component with royal gold themes... */
   const renderSignatureFooter = () => (
-    <footer className="w-full text-center py-8 border-t dark:border-slate-800/80 border-slate-200/80 mt-20 text-xs text-slate-500 font-serif">
+    <footer className="w-full text-center py-10 border-t border-[#C5A059]/20 mt-20 text-xs text-slate-500 font-serif">
       <div className="flex flex-col items-center justify-center gap-3">
-        <span className="italic text-amber-700 dark:text-[#d4af37] font-semibold text-[13px] tracking-wide relative">
-          <Sparkles className="w-4 h-4 text-[#c5a059] dark:text-[#d4af37] inline-block mr-1.5 -mt-0.5" />
+        <span className="italic text-[#C5A059] font-semibold text-[13px] tracking-wide relative flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-[#D4AF37] animate-pulse" />
           Thanks to Allah for His Blessings
         </span>
         <div className="flex flex-col items-center gap-0.5 text-slate-500">
           <span className="text-[10px] uppercase tracking-widest text-slate-400 font-sans">Designed & Developed by</span>
-          <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider text-sm">
+          <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider text-sm transition-colors duration-300">
             Ahmed Falah Hasan
           </span>
         </div>
@@ -823,21 +753,20 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
   const currentLevelGroups = groups.filter(g => g.parent_id === currentGroupId);
   const currentLevelQuizzes = quizzes.filter(q => q.group_id === currentGroupId);
 
-  /* STREAMING_CHUNK: Formatting dashboard views with royal colors... */
   const renderDashboard = () => (
     <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
         {/* Navigation & Admin Panel bar */}
-        <div className="flex flex-col md:flex-row justify-between items-center mb-10 border-b dark:border-slate-800/60 border-slate-200/80 pb-6 gap-6">
+        <div className="flex flex-col md:flex-row justify-between items-center mb-10 border-b border-[#C5A059]/25 pb-6 gap-6">
           <div className="flex items-center gap-3.5 group">
-            <div className="p-2.5 bg-gradient-to-tr from-[#9a7b3c] to-[#c5a059] rounded-xl shadow-lg shadow-amber-500/10">
-              <GraduationCap className="w-8 h-8 text-white" />
+            <div className="p-2.5 bg-gradient-to-tr from-[#C5A059] to-[#D4AF37] rounded-xl shadow-lg shadow-[#D4AF37]/10 transform transition-transform duration-300">
+              <GraduationCap className="w-8 h-8 text-[#0B0F19]" />
             </div>
             <div>
               <h1 className="text-3xl md:text-4xl font-serif tracking-wide text-slate-900 dark:text-white font-black leading-tight">
                 Scholar's Sanctuary
               </h1>
-              <p className="text-xs text-[#c5a059] dark:text-[#d4af37] tracking-wider uppercase font-sans font-bold mt-0.5">Academic Assessment Hub</p>
+              <p className="text-xs text-[#C5A059] tracking-wider uppercase font-sans font-semibold mt-0.5">Academic Assessment Hub</p>
             </div>
           </div>
           <div className="flex flex-row gap-2.5 items-center">
@@ -845,19 +774,19 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               <div className="flex flex-wrap gap-2 items-center">
                 <button 
                   onClick={() => setCurrentView('prompt')}
-                  className="flex items-center gap-2 px-4 py-2 border dark:border-[#d4af37]/30 border-[#c5a059]/30 dark:bg-slate-800/40 bg-white dark:text-[#d4af37] text-amber-800 hover:bg-[#c5a059]/10 transition-all rounded-lg text-sm font-bold shadow-sm"
+                  className="flex items-center gap-2 px-4 py-2 border border-[#C5A059]/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md dark:text-[#D4AF37] text-slate-700 hover:bg-[#C5A059]/10 transition-all duration-300 rounded-lg text-sm font-semibold"
                 >
-                  <FileText className="w-4 h-4 text-[#c5a059] dark:text-[#d4af37]" /> Exam Prompt
+                  <FileText className="w-4 h-4 text-[#C5A059]" /> Exam Prompt
                 </button>
                 <button 
                   onClick={() => setCurrentView('add_quiz')}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] text-white hover:opacity-95 transition-all rounded-lg shadow-md text-sm font-bold"
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] hover:opacity-95 transition-all duration-300 rounded-lg shadow-md shadow-[#D4AF37]/15 text-sm font-semibold"
                 >
                   <Plus className="w-4 h-4" /> Import Quiz
                 </button>
                 <button 
                   onClick={handleAdminLogout}
-                  className="flex items-center gap-1.5 px-3 py-2 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 dark:hover:bg-rose-950/20 hover:bg-rose-50 rounded-lg text-xs font-bold transition-all"
+                  className="flex items-center gap-1.5 px-3 py-2 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 dark:hover:bg-rose-950/20 hover:bg-rose-50 rounded-lg text-xs font-bold transition-all duration-300"
                 >
                   Logout Admin
                 </button>
@@ -865,28 +794,28 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             ) : (
               <button 
                 onClick={() => setShowAdminLoginModal(true)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-semibold border border-slate-200 dark:border-[#d4af37]/20 shadow-sm transition-all"
+                className="flex items-center gap-2 px-4 py-2.5 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md hover:bg-[#C5A059]/10 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-semibold border border-[#C5A059]/30 shadow-sm transition-all duration-300"
               >
-                <Lock className="w-4 h-4 text-[#c5a059]" /> Admin Login
+                <Lock className="w-4 h-4 text-[#C5A059]" /> Admin Login
               </button>
             )}
           </div>
         </div>
 
-        {/* Dynamic Glowing Banner Section - ONLY visible on Home (currentGroupId is null) */}
+        {/* Dynamic Glowing Banner Section - Rendering ONLY on main dashboard level */}
         {currentGroupId === null && (
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 p-8 md:p-10 mb-8 shadow-xl border border-[#d4af37]/20">
-            <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-[#d4af37]/10 to-transparent rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-[#131a2e] to-slate-950 p-8 md:p-10 mb-8 shadow-xl border border-[#C5A059]/30 backdrop-blur-lg">
+            <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-[#D4AF37]/10 to-transparent rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
             
             <div className="relative z-10 max-w-2xl">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#d4af37]/10 border border-[#d4af37]/30 rounded-full text-xs font-bold text-[#d4af37] mb-4 font-mono uppercase tracking-widest">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#C5A059]/15 border border-[#C5A059]/35 rounded-full text-xs font-bold text-[#D4AF37] mb-4 font-mono uppercase tracking-widest">
                 <Sparkles className="w-3.5 h-3.5" /> Portal Operational
               </span>
               <h2 className="text-2xl md:text-3xl font-serif font-bold text-white mb-3 tracking-wide">
                 Welcome to Your Personal Exam Suite
               </h2>
-              {/* FIXED CONTRAST: High readability for dark-on-dark welcome banner */}
-              <p className="text-slate-300 dark:text-slate-300 text-sm leading-relaxed mb-6 font-medium">
+              {/* FIXED CONTRAST: Description text is now pale gold-grey for extreme visibility */}
+              <p className="text-slate-300 dark:text-[#EAE3D2] text-sm leading-relaxed mb-6 font-medium">
                 A high-precision testing environment configured for academic excellence. Upload past questions or notes, generate quizzes, and monitor your concept confidence.
               </p>
             </div>
@@ -894,19 +823,19 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         )}
 
         {/* Breadcrumb Navigation Trail */}
-        <div className="flex items-center gap-2 mb-8 text-xs text-slate-500 dark:text-slate-300 font-bold tracking-wider uppercase bg-slate-100 dark:bg-slate-900/40 px-4 py-2.5 rounded-lg border border-slate-200 dark:border-[#d4af37]/10 flex-wrap">
+        <div className="flex items-center gap-2 mb-8 text-xs text-slate-500 dark:text-slate-400 font-bold tracking-wider uppercase bg-[#C5A059]/5 dark:bg-slate-900/30 px-4 py-2.5 rounded-lg border border-[#C5A059]/20 flex-wrap backdrop-blur-md">
           <button 
             onClick={() => setCurrentGroupId(null)}
-            className="hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-colors flex items-center gap-1"
+            className="hover:text-[#D4AF37] transition-colors flex items-center gap-1 text-[#C5A059]"
           >
             <Home className="w-3.5 h-3.5" /> HOME
           </button>
           {getBreadcrumbs().map((b, idx) => (
             <React.Fragment key={b.id}>
-              <ChevronRight className="w-3.5 h-3.5 text-[#c5a059]" />
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
               <button 
                 onClick={() => setCurrentGroupId(b.id)}
-                className="hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-colors"
+                className="hover:text-[#D4AF37] transition-colors"
               >
                 {b.name}
               </button>
@@ -914,12 +843,12 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           ))}
         </div>
 
-        {/* Admin controls and Folder Modification */}
+        {/* Admin actions and Folder creation bar */}
         {isAdmin && (
-          <div className="flex flex-wrap gap-2.5 mb-8 bg-slate-100 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-[#d4af37]/20 backdrop-blur-md">
+          <div className="flex flex-wrap gap-2.5 mb-8 bg-[#C5A059]/5 dark:bg-slate-900/40 p-4 rounded-xl border border-[#C5A059]/20 backdrop-blur-md">
             <button 
               onClick={() => setShowGroupModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] hover:opacity-95 text-white rounded-lg transition-all text-xs font-bold shadow-md shadow-amber-500/10"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-lg transition-all duration-300 text-xs font-bold shadow-md shadow-[#D4AF37]/5"
             >
               <FolderPlus className="w-4 h-4" /> Add Subgroup / Topic
             </button>
@@ -932,32 +861,32 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                     setEditGroupName(currentGroupObj.name);
                   }
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 border dark:border-[#d4af37]/30 border-[#c5a059]/30 text-slate-700 dark:text-[#d4af37] rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all text-xs font-bold"
+                className="flex items-center gap-1.5 px-4 py-2 border border-[#C5A059]/30 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-[#C5A059]/10 transition-all duration-300 text-xs font-semibold"
               >
-                <Edit3 className="w-4 h-4 text-[#c5a059]" /> Rename Current Group
+                <Edit3 className="w-4 h-4 text-[#C5A059]" /> Rename Current Group
               </button>
             )}
           </div>
         )}
 
         {editingGroupId && (
-          <div className="mb-6 p-4 border dark:border-[#d4af37]/30 border-[#c5a059]/30 bg-[#c5a059]/5 rounded-xl flex flex-wrap items-center gap-4">
-            <span className="text-sm font-bold dark:text-[#d4af37]">Rename Group:</span>
+          <div className="mb-6 p-4 border border-[#C5A059]/40 bg-[#C5A059]/5 rounded-xl flex flex-wrap items-center gap-4 animate-fade-in">
+            <span className="text-sm font-bold dark:text-slate-300">Rename Group:</span>
             <input 
               type="text"
               value={editGroupName}
               onChange={(e) => setEditGroupName(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg dark:bg-slate-900 dark:border-slate-700 text-sm focus:ring-1 focus:ring-[#c5a059] focus:outline-none focus:border-[#c5a059]"
+              className="px-3 py-1.5 border border-[#C5A059]/30 rounded-lg bg-white/20 dark:bg-slate-950/40 text-sm focus:ring-1 focus:ring-[#D4AF37] focus:outline-none"
             />
             <button 
               onClick={handleUpdateGroup}
-              className="px-4 py-1.5 bg-[#c5a059] text-white rounded-lg text-xs font-bold hover:bg-[#a98442] transition-all"
+              className="px-4 py-1.5 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-lg text-xs font-bold hover:opacity-90 transition-all"
             >
               Save
             </button>
             <button 
               onClick={() => setEditingGroupId(null)}
-              className="px-3 py-1.5 border rounded-lg text-xs font-bold dark:text-slate-400"
+              className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-bold dark:text-slate-400"
             >
               Cancel
             </button>
@@ -969,20 +898,20 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           {currentLevelGroups.length > 0 && (
             <div className="space-y-4">
               <h3 className="text-lg font-serif dark:text-slate-200 text-slate-800 font-bold flex items-center gap-2">
-                <Folder className="w-5 h-5 text-[#c5a059] dark:text-[#d4af37] fill-[#c5a059]/10" /> Academic Subgroups
+                <Folder className="w-5 h-5 text-[#C5A059] fill-[#C5A059]/10" /> Academic Subgroups
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {currentLevelGroups.map(grp => (
                   <div 
                     key={grp.id}
-                    className="relative group bg-white dark:bg-slate-900 border dark:border-[#d4af37]/20 border-slate-200 rounded-xl p-5 flex items-center justify-between hover:shadow-md hover:border-[#c5a059] dark:hover:border-[#d4af37] transition-all cursor-pointer"
+                    className="relative group bg-white/40 dark:bg-slate-900/40 border border-[#C5A059]/20 rounded-xl p-5 flex items-center justify-between hover:shadow-md hover:border-[#D4AF37]/50 transition-all duration-300 cursor-pointer backdrop-blur-md"
                     onClick={() => setCurrentGroupId(grp.id)}
                   >
                     <div className="flex items-center gap-4">
-                      <div className="p-2.5 rounded-lg bg-[#c5a059]/10 text-[#c5a059] dark:text-[#d4af37]">
-                        <Folder className="w-6 h-6 fill-amber-500/10" />
+                      <div className="p-2.5 rounded-lg bg-[#C5A059]/10 text-[#C5A059] group-hover:scale-105 transition-transform duration-300">
+                        <Folder className="w-6 h-6 fill-[#C5A059]/10" />
                       </div>
-                      <span className="font-serif font-bold text-md dark:text-slate-100 text-slate-800 pr-6 group-hover:text-[#c5a059] dark:group-hover:text-[#d4af37] transition-colors">
+                      <span className="font-serif font-bold text-md dark:text-slate-100 text-slate-800 pr-6 group-hover:text-[#D4AF37] transition-colors">
                         {grp.name}
                       </span>
                     </div>
@@ -1012,12 +941,12 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           {/* Assessments / Exams Grid Section */}
           <div className="space-y-4">
             <h3 className="text-lg font-serif dark:text-slate-200 text-slate-800 font-bold flex items-center gap-2">
-              <Library className="w-5 h-5 text-[#c5a059] dark:text-[#d4af37]" /> Assessments
+              <Library className="w-5 h-5 text-[#C5A059]" /> Assessments
             </h3>
             
             {currentLevelGroups.length === 0 && currentLevelQuizzes.length === 0 ? (
-              <div className="text-center py-20 border-2 border-dashed dark:border-[#d4af37]/30 border-slate-350 rounded-2xl dark:bg-slate-900/10 bg-slate-50/50 px-6 max-w-xl mx-auto">
-                <BookMarked className="w-12 h-12 mx-auto dark:text-[#d4af37] text-[#c5a059] mb-4" />
+              <div className="text-center py-20 border-2 border-dashed border-[#C5A059]/30 rounded-2xl bg-[#C5A059]/5 dark:bg-slate-900/10 px-6 max-w-xl mx-auto backdrop-blur-md">
+                <BookMarked className="w-12 h-12 mx-auto text-[#C5A059] mb-4" />
                 <p className="dark:text-slate-300 text-slate-600 font-serif text-lg font-bold">This classroom section is empty.</p>
                 <p className="text-slate-400 text-xs mt-1">No folders or assessments have been published inside this hierarchy.</p>
                 {currentGroupId && (
@@ -1028,9 +957,9 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                         setCurrentGroupId(currentGroupObj.parent_id);
                       }
                     }}
-                    className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 border rounded-lg text-xs font-bold dark:border-slate-700 dark:hover:bg-slate-850 hover:bg-slate-100 transition-all"
+                    className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 border border-[#C5A059]/30 rounded-lg text-xs font-bold dark:text-slate-400 dark:hover:bg-slate-800 hover:bg-slate-100 transition-all"
                   >
-                    <Undo className="w-3.5 h-3.5" /> Back Up
+                    <Undo className="w-3.5 h-3.5 text-[#C5A059]" /> Back Up
                   </button>
                 )}
               </div>
@@ -1043,8 +972,8 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   const answeredCount = state?.userAnswers ? Object.keys(state.userAnswers).length : 0;
                   
                   return (
-                    <div key={quiz.id} className="group relative dark:bg-slate-900 bg-white border dark:border-[#d4af37]/20 border-slate-200/80 p-6 rounded-2xl hover:shadow-xl hover:border-[#c5a059]/40 dark:hover:border-[#d4af37]/40 transition-all duration-350 flex flex-col justify-between overflow-hidden shadow-sm">
-                      <div className="absolute top-0 left-0 w-1.5 h-full bg-[#c5a059]/20 dark:bg-[#d4af37]/10 group-hover:bg-[#c5a059] dark:group-hover:bg-[#d4af37] transition-colors duration-300"></div>
+                    <div key={quiz.id} className="group relative bg-white/40 dark:bg-slate-900/40 border border-[#C5A059]/25 p-6 rounded-2xl hover:shadow-xl hover:border-[#D4AF37]/55 transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-sm backdrop-blur-md">
+                      <div className="absolute top-0 left-0 w-1.5 h-full bg-[#C5A059]/20 group-hover:bg-[#D4AF37] transition-colors duration-300"></div>
                       
                       <div className="pl-2">
                         {isAdmin && (
@@ -1055,25 +984,25 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                                 `Are you sure you want to permanently delete "${quiz.quiz_title}"?`,
                                 () => deleteQuiz(quiz.id)
                               );
-                            }} className="p-1.5 rounded-lg dark:text-slate-550 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-all">
+                            }} className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-all">
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
                         )}
                         
-                        <h3 className="text-xl font-serif dark:text-slate-100 text-slate-800 mb-2 pr-8 leading-snug font-bold group-hover:text-[#c5a059] dark:group-hover:text-[#d4af37] transition-colors">
+                        <h3 className="text-xl font-serif dark:text-slate-100 text-slate-800 mb-2 pr-8 leading-snug font-bold group-hover:text-[#D4AF37] transition-colors">
                           {quiz.quiz_title}
                         </h3>
                         
                         <div className="flex flex-wrap gap-2.5 mb-6 items-center">
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider dark:text-slate-400 text-slate-500 dark:bg-slate-800 bg-slate-100 px-2.5 py-1 rounded-md">
-                            <BookOpen className="w-3.5 h-3.5 text-[#c5a059] dark:text-[#d4af37]" />
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider dark:text-slate-300 text-slate-500 bg-[#C5A059]/10 px-2.5 py-1 rounded-md">
+                            <BookOpen className="w-3.5 h-3.5 text-[#C5A059]" />
                             {quiz.questions ? quiz.questions.length : 0} Questions
                           </span>
                           {isStarted && (
                             <>
                               <span className="text-slate-400 text-xs">•</span>
-                              <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md ${isCompleted ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-[#c5a059] dark:text-[#d4af37]'}`}>
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md ${isCompleted ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'}`}>
                                 {isCompleted ? <Award className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
                                 {isCompleted ? 'Completed' : `In Progress (${answeredCount}/${quiz.questions.length})`}
                               </span>
@@ -1086,15 +1015,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                         {!isStarted ? (
                           <button 
                             onClick={() => startQuiz(quiz)}
-                            className="w-full flex items-center justify-center gap-2 py-3 dark:bg-slate-850 bg-slate-50 dark:hover:bg-[#d4af37] hover:bg-[#c5a059]/10 dark:text-slate-200 text-[#c5a059] hover:text-[#a98442] dark:hover:text-slate-950 rounded-xl transition-all font-bold text-sm shadow-inner"
+                            className="w-full flex items-center justify-center gap-2 py-3 bg-[#C5A059]/10 hover:bg-gradient-to-r hover:from-[#C5A059] hover:to-[#D4AF37] dark:text-slate-200 text-slate-700 hover:text-[#0B0F19] rounded-xl transition-all duration-300 font-bold text-sm shadow-inner"
                           >
-                            <Play className="w-4 h-4 fill-[#c5a059] dark:fill-slate-200 inline" /> Start Assessment
+                            <Play className="w-4 h-4 fill-current inline" /> Start Assessment
                           </button>
                         ) : isCompleted ? (
                           <div className="grid grid-cols-2 gap-3">
                             <button 
                               onClick={() => reviewSavedQuiz(quiz)}
-                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white rounded-xl transition-all text-sm font-bold shadow-md shadow-emerald-500/10"
+                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white rounded-xl transition-all duration-300 text-sm font-bold shadow-md shadow-emerald-500/10"
                             >
                               <Eye className="w-4 h-4" /> Review
                             </button>
@@ -1109,21 +1038,19 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                                   }
                                 );
                               }}
-                              className="flex items-center justify-center gap-2 py-2.5 dark:bg-slate-800 bg-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-700 rounded-xl transition-all text-sm font-bold"
+                              className="flex items-center justify-center gap-2 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-700 rounded-xl transition-all duration-300 text-sm font-bold"
                             >
                               <RotateCcw className="w-4 h-4" /> Reset
                             </button>
                           </div>
                         ) : (
                           <div className="grid grid-cols-2 gap-3">
-                            {/* FIXED CONTRAST: High class golden resume button without dark on dark or low contrast colors */}
                             <button 
                               onClick={() => continueQuiz(quiz)}
-                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] hover:opacity-95 text-white rounded-xl transition-all text-sm font-bold shadow-md shadow-amber-500/10"
+                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] hover:opacity-95 rounded-xl transition-all duration-300 text-sm font-bold shadow-md shadow-[#D4AF37]/10"
                             >
                               <Play className="w-4 h-4" /> Resume
                             </button>
-                            {/* QUIETER ANIMATION: Gentle, non-jumping action buttons */}
                             <button 
                               onClick={() => {
                                 showConfirm(
@@ -1132,7 +1059,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                                   () => startQuiz(quiz)
                                 );
                               }}
-                              className="flex items-center justify-center gap-2 py-2.5 dark:bg-slate-800 bg-slate-100 hover:bg-slate-250 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-750 rounded-xl transition-all text-sm font-bold"
+                              className="flex items-center justify-center gap-2 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-700 rounded-xl transition-all duration-300 text-sm font-bold"
                             >
                               <RotateCcw className="w-4 h-4" /> Restart
                             </button>
@@ -1151,18 +1078,17 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     </div>
   );
 
-  /* STREAMING_CHUNK: Formatting import and create quiz screens... */
   const renderAddQuiz = () => (
     <div className="w-full max-w-3xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
-        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#c5a059] dark:hover:text-[#d4af37] mb-8 transition-colors font-bold text-sm">
+        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
           <ChevronLeft className="w-4 h-4" /> Back to Dashboard
         </button>
 
-        <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
+        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
           <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-3 flex items-center gap-3 font-bold">
-            <FileText className="w-6 h-6 text-[#c5a059]" /> Import Academic Assessment
+            <FileText className="w-6 h-6 text-[#C5A059]" /> Import Academic Assessment
           </h2>
           <p className="dark:text-slate-400 text-slate-600 mb-6 text-sm">
             Paste the JSON generated by your AI tool. It will be cataloged under the current folder pathway.
@@ -1171,7 +1097,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           <textarea
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
-            className="w-full h-96 dark:bg-slate-950 bg-slate-50 border dark:border-slate-800 border-slate-300 rounded-xl p-4 dark:text-slate-300 text-slate-800 font-mono text-xs focus:outline-none focus:border-[#c5a059] focus:ring-1 focus:ring-[#c5a059] transition-all resize-none shadow-inner"
+            className="w-full h-96 bg-white/20 dark:bg-slate-950/40 border border-[#C5A059]/30 rounded-xl p-4 dark:text-slate-300 text-slate-800 font-mono text-xs focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all resize-none shadow-inner"
             placeholder='{"quizTitle": "...", "questions": [...]}'
           />
           
@@ -1186,7 +1112,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             <button 
               onClick={handleAddQuiz}
               disabled={!jsonInput.trim()}
-              className="w-full sm:w-auto px-8 py-3 bg-[#c5a059] text-white hover:bg-[#a98442] disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all font-bold shadow-md"
+              className="w-full sm:w-auto px-8 py-3 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all duration-300 font-bold shadow-md shadow-[#D4AF37]/15"
             >
               Upload Quiz to Database
             </button>
@@ -1197,30 +1123,29 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     </div>
   );
 
-  /* STREAMING_CHUNK: Formatting admin prompt guide ... */
   const renderPrompt = () => (
     <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
-        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#c5a059] dark:hover:text-[#d4af37] mb-8 transition-colors font-bold text-sm">
+        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
           <ChevronLeft className="w-4 h-4" /> Back to Dashboard
         </button>
 
-        <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
+        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <h2 className="text-2xl font-serif dark:text-white text-slate-900 font-bold">AI Exam Generator Prompt</h2>
             <button 
               onClick={copyToClipboard}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 dark:bg-slate-800 bg-slate-100 dark:text-slate-200 text-slate-700 hover:bg-[#c5a059]/10 hover:text-[#c5a059] dark:hover:bg-slate-850 dark:hover:text-[#d4af37] border dark:border-slate-700 border-slate-300 transition-all rounded-xl text-xs font-bold shadow-sm"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-[#C5A059]/10 border border-[#C5A059]/30 text-slate-700 dark:text-slate-200 hover:bg-[#C5A059]/25 transition-all duration-300 rounded-xl text-xs font-bold shadow-sm"
             >
-              <Copy className="w-4 h-4" /> {copySuccess || 'Copy Prompt'}
+              <Copy className="w-4 h-4 text-[#C5A059]" /> {copySuccess || 'Copy Prompt'}
             </button>
           </div>
-          <p className="dark:text-slate-400 text-slate-600 mb-6 border-b dark:border-slate-800/80 border-slate-200/80 pb-6 text-sm">
-            Copy this instructional prompt and provide it to your preferred AI model along with your lecture notes. It enforces the strict academic rules and JSON data structure required for this application.
+          <p className="dark:text-slate-400 text-slate-600 mb-6 border-b border-slate-200/55 dark:border-slate-800/80 pb-6 text-sm">
+            Copy this instructional prompt and provide it to your preferred AI model along with your lecture notes.
           </p>
 
-          <div className="dark:bg-slate-950 bg-slate-50 border dark:border-slate-850 border-slate-200 p-6 rounded-xl overflow-y-auto max-h-[50vh] custom-scrollbar shadow-inner">
+          <div className="bg-white/10 dark:bg-slate-950/30 border border-[#C5A059]/20 p-6 rounded-xl overflow-y-auto max-h-[50vh] custom-scrollbar shadow-inner">
             <pre className="dark:text-slate-300 text-slate-700 font-mono text-xs md:text-sm whitespace-pre-wrap leading-relaxed select-all">
               {aiPrompt}
             </pre>
@@ -1231,7 +1156,6 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     </div>
   );
 
-  /* STREAMING_CHUNK: Formatting active quiz engine view... */
   const renderTakingQuiz = () => {
     if (!activeQuiz) return null;
     const currentQ = activeQuiz.questions[currentQuestionIndex];
@@ -1239,62 +1163,64 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     const isAnswered = selectedOptId !== undefined;
     const isUncertain = uncertainQuestions[currentQuestionIndex] === true;
 
-    // Calculate interactive progress percentage
+    // Calculate fluid progress percentages
     const progressPercent = Math.round(((currentQuestionIndex + 1) / activeQuiz.questions.length) * 100);
 
     return (
       <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
         <div>
-          {/* Dashboard utility controllers */}
           <div className="flex flex-row justify-between items-center mb-6">
             <button 
               onClick={resetToDashboard} 
-              className="flex items-center gap-2 dark:text-slate-400 text-slate-600 hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-all duration-300 text-xs px-3.5 py-2 border dark:border-slate-850 border-slate-350 hover:border-[#c5a059]/50 dark:bg-slate-900 bg-white rounded-lg font-bold shadow-sm"
+              className="flex items-center gap-2 dark:text-slate-400 text-slate-600 hover:text-[#D4AF37] transition-all duration-300 text-xs px-3.5 py-2 border border-[#C5A059]/25 bg-white/40 dark:bg-slate-900/40 rounded-lg font-bold shadow-sm backdrop-blur-md"
             >
-              <LogOut className="w-4 h-4" /> Save & Exit
+              <LogOut className="w-4 h-4 text-[#C5A059]" /> Save & Exit
             </button>
-
-            {isAdmin && (
-              <button 
-                onClick={() => openEditQuestionModal(currentQuestionIndex)}
-                className="flex items-center gap-1.5 px-3 py-2 border border-[#c5a059]/40 bg-[#c5a059]/5 dark:text-[#d4af37] text-amber-800 hover:bg-[#c5a059]/10 rounded-lg text-xs font-bold transition-all"
-              >
-                <Edit3 className="w-3.5 h-3.5" /> Edit This Question
-              </button>
-            )}
             
-            <button 
-              onClick={() => {
-                showConfirm(
-                  "Reset Progress",
-                  "Are you sure you want to clear your current answers and restart this assessment?",
-                  () => startQuiz(activeQuiz)
-                );
-              }}
-              className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-colors duration-300 text-xs font-bold"
-            >
-              <RotateCcw className="w-4 h-4" /> Restart Exam
-            </button>
+            <div className="flex items-center gap-4">
+              {/* ADMIN EDIT BUTTON */}
+              {isAdmin && (
+                <button 
+                  onClick={() => openEditQuestionPanel(currentQuestionIndex)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-[#D4AF37] bg-[#C5A059]/10 hover:bg-[#C5A059]/25 border border-[#C5A059]/30 px-3.5 py-2 rounded-lg transition-all"
+                >
+                  <Edit3 className="w-3.5 h-3.5" /> Edit Question
+                </button>
+              )}
+
+              <button 
+                onClick={() => {
+                  showConfirm(
+                    "Reset Progress",
+                    "Are you sure you want to clear your current answers and restart this assessment?",
+                    () => startQuiz(activeQuiz)
+                  );
+                }}
+                className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors duration-300 text-xs font-bold"
+              >
+                <RotateCcw className="w-4 h-4" /> Restart Exam
+              </button>
+            </div>
           </div>
 
-          <div className="flex justify-between items-center mb-4 border-b dark:border-slate-800/80 border-slate-200/80 pb-4">
+          <div className="flex justify-between items-center mb-4 border-b border-[#C5A059]/25 pb-4">
             <h2 className="text-xl md:text-2xl font-serif dark:text-slate-100 text-slate-800 font-bold truncate pr-4 leading-tight">
               {activeQuiz.quiz_title}
             </h2>
-            <div className="text-amber-800 dark:text-[#d4af37] font-bold tracking-wider uppercase whitespace-nowrap bg-[#c5a059]/10 px-3.5 py-1.5 rounded-lg text-xs border border-[#c5a059]/25">
+            <div className="text-[#D4AF37] font-bold tracking-wider uppercase whitespace-nowrap bg-[#C5A059]/10 px-3.5 py-1.5 rounded-lg text-xs border border-[#C5A059]/20">
               Q{currentQuestionIndex + 1} OF {activeQuiz.questions.length}
             </div>
           </div>
 
           {/* Micro-animated dynamic progress bar */}
-          <div className="w-full h-1.5 dark:bg-slate-850 bg-slate-200 rounded-full overflow-hidden mb-8 shadow-inner flex">
+          <div className="w-full h-2 bg-slate-200 dark:bg-slate-850 rounded-full overflow-hidden mb-8 shadow-inner flex">
             <div 
-              className="h-full bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] transition-all duration-500 ease-out"
+              className="h-full bg-gradient-to-r from-[#C5A059] to-[#D4AF37] transition-all duration-300"
               style={{ width: `${progressPercent}%` }}
             ></div>
           </div>
 
-          {/* Quick assessment question nodes selector */}
+          {/* Grid of Jump Targets */}
           <div className="flex gap-2 overflow-x-auto mb-8 pb-3.5 custom-scrollbar">
             {activeQuiz.questions.map((q, idx) => {
               const ansId = userAnswers[idx];
@@ -1308,32 +1234,32 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               let textClass = "";
 
               if (qUncertain) {
-                borderClass = "border-amber-500 dark:border-amber-500 shadow-amber-500/10 shadow-md";
+                borderClass = "border-amber-500 shadow-amber-500/10 shadow-md";
               } else if (isCurrent) {
-                borderClass = "border-[#c5a059] dark:border-[#d4af37] shadow-[#c5a059]/10 shadow-md";
+                borderClass = "border-[#D4AF37] shadow-[#D4AF37]/10 shadow-md";
               } else if (!hasAnswered) {
-                borderClass = "border-slate-200/80 dark:border-slate-800/80 hover:border-slate-350 dark:hover:border-slate-700";
+                borderClass = "border-[#C5A059]/20";
               } else if (isCorrect) {
-                borderClass = "border-emerald-500/30 dark:border-emerald-500/20";
+                borderClass = "border-emerald-500/30";
               } else {
-                borderClass = "border-rose-500/30 dark:border-rose-500/20";
+                borderClass = "border-rose-500/30";
               }
 
               if (isCurrent && !qUncertain) {
-                bgClass = "bg-[#c5a059]/15 dark:bg-[#d4af37]/10";
-                textClass = "text-[#c5a059] dark:text-[#d4af37] font-extrabold";
+                bgClass = "bg-[#C5A059]/15";
+                textClass = "text-[#D4AF37] font-extrabold";
               } else if (!hasAnswered) {
-                bgClass = "bg-white dark:bg-slate-900";
-                textClass = "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100";
+                bgClass = "bg-white/20 dark:bg-slate-900/40 backdrop-blur-md";
+                textClass = "text-slate-500 dark:text-slate-400 hover:text-[#D4AF37]";
               } else if (isCorrect) {
-                bgClass = "bg-emerald-500/10 dark:bg-emerald-950/25";
-                textClass = "text-emerald-600 dark:text-emerald-400 font-bold";
+                bgClass = "bg-emerald-500/10";
+                textClass = "text-emerald-500 font-bold";
               } else {
-                bgClass = "bg-rose-500/10 dark:bg-rose-950/25";
-                textClass = "text-rose-600 dark:text-rose-400 font-bold";
+                bgClass = "bg-rose-500/10";
+                textClass = "text-rose-500 font-bold";
               }
 
-              const activeIndicator = isCurrent ? " ring-1 ring-[#c5a059]/50 dark:ring-[#d4af37]/50" : "";
+              const activeIndicator = isCurrent ? " ring-2 ring-[#D4AF37]/30 ring-offset-2 dark:ring-offset-slate-950" : "";
 
               return (
                 <button
@@ -1349,7 +1275,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           </div>
 
           {/* Interactive Card containing questions and options */}
-          <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl p-6 md:p-10 shadow-lg relative overflow-hidden">
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-10 shadow-lg relative overflow-hidden backdrop-blur-md">
             <h3 className="text-xl md:text-2xl dark:text-slate-100 text-slate-800 font-serif leading-relaxed mb-8 font-bold">
               {currentQ.question}
             </h3>
@@ -1362,14 +1288,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                 let btnClass = "w-full text-left p-4 rounded-xl border transition-all duration-300 flex items-start gap-4 relative group ";
                 
                 if (!isAnswered) {
-                  btnClass += "border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-900 dark:text-slate-200 text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:border-[#c5a059] dark:hover:border-[#d4af37] cursor-pointer hover:shadow-md";
+                  btnClass += "border-[#C5A059]/20 bg-white/20 dark:bg-slate-900/20 text-slate-750 dark:text-slate-200 hover:bg-[#C5A059]/10 hover:border-[#D4AF37] cursor-pointer hover:shadow-md";
                 } else {
                   if (isCorrectOption) {
-                    btnClass += "border-emerald-500 dark:border-emerald-600/80 bg-emerald-500/10 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300 shadow-md"; 
+                    btnClass += "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-350 shadow-md"; 
                   } else if (isSelected && !isCorrectOption) {
-                    btnClass += "border-rose-500 dark:border-rose-600/80 bg-rose-500/10 dark:bg-rose-950/30 text-rose-800 dark:text-rose-300 shadow-md"; 
+                    btnClass += "border-rose-500 bg-rose-500/10 text-rose-800 dark:text-rose-350 shadow-md"; 
                   } else {
-                    btnClass += "border-slate-200 dark:border-slate-800/80 bg-slate-50/30 dark:bg-slate-955/30 text-slate-450 dark:text-slate-600 opacity-50"; 
+                    /* FIXED DISCOLORATION: Soft but beautifully readable golden-grey tone, retaining 75% opacity for clear visibility */
+                    btnClass += "border-[#C5A059]/15 bg-white/5 dark:bg-slate-950/20 text-slate-500 dark:text-slate-400 opacity-75 backdrop-blur-sm cursor-not-allowed"; 
                   }
                 }
 
@@ -1385,27 +1312,27 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                           ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' 
                           : isAnswered && isSelected && !isCorrectOption 
                           ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300' 
-                          : 'bg-slate-200/50 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                          : 'bg-[#C5A059]/20 text-slate-700 dark:text-[#D4AF37]'
                       }`}>
                         {option.id}
                       </span>
                       <span className="flex-grow leading-relaxed font-sans">{option.text}</span>
                       
                       {!isAnswered && (
-                        <span className="hidden sm:inline-block absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-[10px] font-bold bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-750 text-slate-500 dark:text-slate-400 tracking-wider">
+                        <span className="hidden sm:inline-block absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-[10px] font-bold bg-[#C5A059]/15 px-2 py-1 rounded border border-[#C5A059]/30 text-[#D4AF37] tracking-wider">
                           PRESS {idx + 1}
                         </span>
                       )}
 
-                      {isAnswered && isCorrectOption && <Check className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />}
-                      {isAnswered && isSelected && !isCorrectOption && <X className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />}
+                      {isAnswered && isCorrectOption && <Check className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5 animate-pulse" />}
+                      {isAnswered && isSelected && !isCorrectOption && <X className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />}
                     </button>
                     
                     {isAnswered && (
-                      <div className={`mt-3 p-4 text-sm rounded-xl border-l-4 ml-2 md:ml-4 shadow-sm ${
+                      <div className={`mt-3 p-4 text-sm rounded-xl border-l-4 ml-2 md:ml-4 animate-fade-in shadow-sm ${
                         isCorrectOption 
-                          ? "bg-emerald-500/5 dark:bg-emerald-950/10 border-emerald-550 text-emerald-800 dark:text-emerald-200" 
-                          : "bg-rose-500/5 dark:bg-rose-950/10 border-rose-550 text-rose-800 dark:text-rose-200"
+                          ? "bg-emerald-500/5 border-emerald-500 text-emerald-800 dark:text-emerald-200" 
+                          : "bg-rose-500/5 border-rose-500 text-rose-800 dark:text-rose-200"
                       }`}>
                         <span className="font-bold uppercase tracking-wider text-xs block mb-1 font-mono">{isCorrectOption ? 'Correct Insights:' : 'Conceptual Error Explained:'}</span>
                         <span className="leading-relaxed font-sans font-medium">{option.explanation}</span>
@@ -1416,12 +1343,12 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               })}
             </div>
 
-            {/* Pagination / navigation controllers */}
-            <div className="mt-10 flex flex-col-reverse sm:flex-row justify-between items-center border-t dark:border-slate-800 border-slate-200 pt-6 gap-4">
+            {/* Pagination / Navigation Controllers */}
+            <div className="mt-10 flex flex-col-reverse sm:flex-row justify-between items-center border-t border-[#C5A059]/20 pt-6 gap-4">
               <button 
                 onClick={handlePrevQuestion}
                 disabled={currentQuestionIndex === 0}
-                className="w-full sm:w-auto flex justify-center items-center gap-2 px-5 py-2.5 border dark:border-slate-800 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold"
+                className="w-full sm:w-auto flex justify-center items-center gap-2 px-5 py-2.5 border border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-[#C5A059]/10 rounded-xl transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold"
               >
                 <ChevronLeft className="w-4 h-4" /> <span>Previous</span>
               </button>
@@ -1431,8 +1358,8 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   onClick={toggleUncertainty}
                   className={`flex items-center justify-center gap-2 px-5 py-2.5 border rounded-xl transition-all duration-300 text-xs font-bold w-full sm:w-auto ${
                     isUncertain
-                      ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-md'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:border-amber-500 hover:text-amber-600 dark:hover:border-amber-500 dark:hover:text-[#d4af37]'
+                      ? 'border-amber-500 bg-amber-500/10 text-amber-500'
+                      : 'border-[#C5A059]/30 text-slate-500 hover:border-amber-500/60 hover:text-amber-500'
                   }`}
                 >
                   <AlertTriangle className="w-4 h-4" />
@@ -1442,29 +1369,29 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
 
               <button 
                 onClick={currentQuestionIndex < activeQuiz.questions.length - 1 ? handleNextQuestion : finishQuiz}
-                className="w-full sm:w-auto flex justify-center items-center gap-2 px-6 py-2.5 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all duration-300 shadow-md text-xs font-bold"
+                className="w-full sm:w-auto flex justify-center items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all duration-300 shadow-md shadow-[#D4AF37]/15 text-xs font-bold"
               >
                 {currentQuestionIndex < activeQuiz.questions.length - 1 ? 'Next Question' : 'Finish Assessment'} 
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Visual hotkey controller panel (Desktop Only) */}
-            <div className="mt-8 flex flex-wrap justify-center items-center gap-y-2 gap-x-6 text-[10px] uppercase tracking-wider dark:text-slate-500 text-slate-400 pt-4 border-t border-dashed dark:border-slate-850 border-slate-250 hidden md:flex font-bold">
-              <div className="flex items-center gap-1.5 font-sans">
-                <Keyboard className="w-4 h-4 text-[#c5a059] dark:text-[#d4af37]" />
+            {/* Desktop Keyboard Assist Panel */}
+            <div className="mt-8 flex flex-wrap justify-center items-center gap-y-2 gap-x-6 text-[10px] uppercase tracking-wider text-slate-400 pt-4 border-t border-dashed border-[#C5A059]/20 hidden md:flex font-bold">
+              <div className="flex items-center gap-1.5 font-sans text-[#C5A059]">
+                <Keyboard className="w-4 h-4" />
                 <span>HOTKEYS ACTIVE:</span>
               </div>
               <div className="flex items-center gap-1.5 font-mono">
-                <span className="bg-slate-100 dark:bg-slate-850 border dark:border-slate-800 border-slate-250 px-1.5 py-0.5 rounded text-[9px]">1 - 4</span>
+                <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">1 - 4</span>
                 <span>Select Response</span>
               </div>
               <div className="flex items-center gap-1.5 font-mono">
-                <span className="bg-slate-100 dark:bg-slate-850 border dark:border-slate-800 border-slate-250 px-1.5 py-0.5 rounded text-[9px]">C</span>
+                <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">C</span>
                 <span>Uncertainty Toggler</span>
               </div>
               <div className="flex items-center gap-1.5 font-mono">
-                <span className="bg-slate-100 dark:bg-slate-850 border dark:border-slate-800 border-slate-250 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
+                <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
                 <span>Slide Navigate</span>
               </div>
             </div>
@@ -1475,7 +1402,6 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     );
   };
 
-  /* STREAMING_CHUNK: Formatting review analysis screen... */
   const renderReview = () => {
     const { incorrect, correctButUncertain } = computeReviewData();
     const totalQuestions = activeQuiz.questions.length;
@@ -1486,28 +1412,28 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
       <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
         <div>
           {/* Completion Metrics Score Card */}
-          <div className="text-center mb-10 dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl p-8 shadow-lg relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-emerald-500 via-[#c5a059] to-amber-500"></div>
-            <Award className="w-16 h-16 mx-auto text-[#c5a059] dark:text-[#d4af37] mb-4" />
+          <div className="text-center mb-10 bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#C5A059] via-[#D4AF37] to-[#C5A059]"></div>
+            <Award className="w-16 h-16 mx-auto text-[#D4AF37] mb-4" />
             <h2 className="text-3xl font-serif dark:text-white text-slate-900 mb-2 font-bold tracking-wide">Assessment Completed</h2>
             <div className="flex items-center justify-center gap-4 text-lg">
-              <span className="dark:text-slate-300 text-slate-600 font-serif">Score: <strong className="text-[#c5a059] dark:text-[#d4af37] font-bold">{score} / {totalQuestions}</strong></span>
+              <span className="dark:text-slate-300 text-slate-600 font-serif">Score: <strong className="text-[#D4AF37] font-bold">{score} / {totalQuestions}</strong></span>
               <span className="dark:text-slate-700 text-slate-350">|</span>
-              <span className={`font-black ${percentage >= 80 ? 'text-emerald-600 dark:text-emerald-400' : percentage >= 60 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
+              <span className={`font-black ${percentage >= 80 ? 'text-emerald-500' : percentage >= 60 ? 'text-[#D4AF37]' : 'text-rose-500'}`}>
                 {percentage}%
               </span>
             </div>
           </div>
 
           {incorrect.length === 0 ? (
-            <div className="text-center dark:bg-emerald-950/10 bg-emerald-50/50 border border-emerald-500/20 p-10 rounded-2xl shadow-sm">
+            <div className="text-center bg-emerald-500/5 border border-emerald-500/20 p-10 rounded-2xl shadow-sm">
               <Check className="w-12 h-12 mx-auto text-emerald-500 mb-4" />
-              <h3 className="text-2xl text-emerald-700 dark:text-emerald-400 font-serif mb-2 font-bold">Excellent understanding!</h3>
+              <h3 className="text-2xl text-emerald-600 dark:text-emerald-400 font-serif mb-2 font-bold">Excellent understanding!</h3>
               <p className="text-emerald-600 dark:text-emerald-500/80 text-sm font-medium">You completed every question correctly without errors. Your concept grasp is established.</p>
             </div>
           ) : (
             <div className="space-y-6 animate-fade-in">
-              <h3 className="text-xl dark:text-slate-200 text-slate-800 font-serif font-bold border-b dark:border-slate-800 border-slate-200 pb-2 flex items-center gap-2">
+              <h3 className="text-xl dark:text-slate-200 text-slate-800 font-serif font-bold border-b border-[#C5A059]/25 pb-2 flex items-center gap-2">
                 <ShieldAlert className="w-5 h-5 text-rose-500" /> Review Your Mistakes
               </h3>
               {incorrect.map((item, idx) => {
@@ -1516,27 +1442,19 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                 const correctOpt = q.options.find(o => o.isCorrect);
 
                 return (
-                  <div key={idx} className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 p-6 rounded-2xl relative overflow-hidden shadow-sm">
+                  <div key={idx} className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 p-6 rounded-2xl relative overflow-hidden shadow-sm backdrop-blur-md">
                     <div className={`absolute top-0 left-0 w-1.5 h-full ${item.isUncertain ? 'bg-amber-500' : 'bg-rose-500'}`}></div>
                     
                     <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-5 pl-2">
                       <h4 className="text-lg dark:text-slate-100 text-slate-800 font-serif leading-relaxed flex-grow font-bold">{q.question}</h4>
                       
-                      <div className="flex items-center gap-2 shrink-0 font-mono">
-                        {isAdmin && (
-                          <button 
-                            onClick={() => openEditQuestionModal(item.index)}
-                            className="flex items-center gap-1 px-2.5 py-1 text-xs border border-[#c5a059]/40 bg-[#c5a059]/10 text-amber-800 dark:text-[#d4af37] rounded-md font-bold transition-all"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" /> Edit
-                          </button>
-                        )}
+                      <div className="shrink-0 font-mono">
                         {item.isUncertain ? (
-                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 shadow-sm">
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-sm">
                             <AlertTriangle className="w-3.5 h-3.5" /> Uncertain / Incorrect
                           </span>
                         ) : (
-                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/20 shadow-sm">
+                          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-rose-500 border border-rose-500/20 shadow-sm">
                             <ShieldAlert className="w-3.5 h-3.5" /> Confident / Incorrect
                           </span>
                         )}
@@ -1544,31 +1462,31 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 pl-2">
-                      <div className="bg-rose-500/5 dark:bg-rose-950/10 border border-rose-500/10 p-4 rounded-xl">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-rose-600 dark:text-rose-400 block mb-2 font-mono">Your Choice</span>
+                      <div className="bg-rose-500/5 border border-rose-500/10 p-4 rounded-xl">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-rose-500 block mb-2 font-mono">Your Choice</span>
                         {selectedOpt ? (
                           <>
                             <p className="dark:text-slate-200 text-slate-800 mb-2 font-bold text-sm">{selectedOpt.id}. {selectedOpt.text}</p>
-                            <p className="text-xs dark:text-rose-350 text-rose-700 leading-relaxed font-medium">{selectedOpt.explanation}</p>
+                            <p className="text-xs text-rose-700 dark:text-rose-300 leading-relaxed font-medium">{selectedOpt.explanation}</p>
                           </>
                         ) : (
                           <p className="dark:text-slate-500 text-slate-450 italic text-xs font-semibold">Skipped Response Node</p>
                         )}
                       </div>
                       
-                      <div className="bg-emerald-500/5 dark:bg-emerald-950/10 border border-emerald-500/10 p-4 rounded-xl">
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 block mb-2 font-mono">Correct Answer</span>
+                      <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-xl">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-550 block mb-2 font-mono">Correct Answer</span>
                         <p className="dark:text-slate-200 text-slate-800 mb-2 font-bold text-sm">{correctOpt.id}. {correctOpt.text}</p>
-                        <p className="text-xs dark:text-emerald-350 text-emerald-700 leading-relaxed font-medium">{correctOpt.explanation}</p>
+                        <p className="text-xs text-emerald-700 dark:text-emerald-300 leading-relaxed font-medium">{correctOpt.explanation}</p>
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-4 border-t dark:border-slate-800 border-slate-100 pl-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest dark:text-slate-500 text-slate-450 block mb-3 font-mono">Other Options Analysis</span>
+                    <div className="mt-4 pt-4 border-t border-[#C5A059]/20 pl-2">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 block mb-3 font-mono font-sans">Other Options Analysis</span>
                       <div className="space-y-2">
                         {q.options.filter(o => o.id !== correctOpt.id && o.id !== item.selectedOptionId).map(opt => (
                           <div key={opt.id} className="text-xs dark:text-slate-400 text-slate-600 font-medium">
-                            <span className="font-bold dark:text-slate-500 text-slate-400 mr-1.5 font-mono">{opt.id}.</span> {opt.explanation}
+                            <span className="font-bold text-slate-500 mr-1.5 font-mono">{opt.id}.</span> {opt.explanation}
                           </div>
                         ))}
                       </div>
@@ -1580,34 +1498,34 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           )}
 
           {/* Correct but uncertain answers toggler */}
-          <div className="mt-10 dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200/80 rounded-2xl overflow-hidden shadow-sm">
+          <div className="mt-10 bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl overflow-hidden shadow-sm backdrop-blur-md">
             <button 
               onClick={() => setCorrectUncertainOpen(!correctUncertainOpen)}
-              className="w-full flex justify-between items-center p-5 hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors duration-300"
+              className="w-full flex justify-between items-center p-5 hover:bg-[#C5A059]/10 transition-colors duration-300"
             >
               <div className="flex items-center gap-4">
-                <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500">
                   <HelpCircle className="w-5 h-5" />
                 </div>
                 <div className="text-left">
                   <h4 className="font-serif dark:text-slate-200 text-slate-800 text-lg font-bold">Correct but Uncertain Responses</h4>
                   <p className="text-xs dark:text-slate-400 text-slate-500 mt-0.5 font-semibold">
-                    You answered <strong className="text-amber-600 dark:text-amber-400">{correctButUncertain.length}</strong> questions correctly but had marked them as uncertain.
+                    You answered <strong className="text-amber-500">{correctButUncertain.length}</strong> questions correctly but had marked them as uncertain.
                   </p>
                 </div>
               </div>
-              <div className="text-slate-400 dark:text-slate-500">
+              <div className="text-slate-450">
                 {correctUncertainOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
               </div>
             </button>
 
             {correctUncertainOpen && (
-              <div className="p-6 border-t dark:border-slate-800 border-amber-150 space-y-6 dark:bg-slate-950/30 bg-slate-50/50 animate-fade-in">
+              <div className="p-6 border-t border-[#C5A059]/20 space-y-6 bg-slate-50/50 dark:bg-[#090d16] animate-fade-in">
                 {correctButUncertain.length === 0 ? (
-                  <p className="dark:text-slate-555 text-slate-400 text-xs italic text-center py-4 font-bold">No uncertain correct responses recorded. Complete confidence held.</p>
+                  <p className="text-slate-500 text-xs italic text-center py-4 font-bold">No uncertain correct responses recorded. Complete confidence held.</p>
                 ) : (
                   <div className="space-y-6">
-                    <p className="dark:text-slate-400 text-slate-650 text-xs mb-4 font-semibold leading-relaxed">
+                    <p className="dark:text-slate-400 text-slate-600 text-xs mb-4 font-semibold leading-relaxed">
                       Reviewing these concepts helps bridge educated or intuitive guesses into robust, structured retention.
                     </p>
                     
@@ -1616,24 +1534,16 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                       const correctOpt = q.options.find(o => o.isCorrect);
 
                       return (
-                        <div key={idx} className="border-l-4 border-[#c5a059] pl-4 py-1">
-                          <div className="flex items-center justify-between gap-2 mb-2 text-[10px] font-bold dark:text-slate-500 text-slate-400 uppercase tracking-widest font-mono">
+                        <div key={idx} className="border-l-4 border-amber-500 pl-4 py-1">
+                          <div className="flex items-center gap-2 mb-2 text-[10px] font-bold text-slate-450 uppercase tracking-widest font-mono">
                             <span>Question {item.index + 1}</span>
-                            {isAdmin && (
-                              <button 
-                                onClick={() => openEditQuestionModal(item.index)}
-                                className="flex items-center gap-1 px-2.5 py-1 text-[10px] border border-[#c5a059]/40 bg-[#c5a059]/10 text-amber-800 dark:text-[#d4af37] rounded-md font-bold transition-all"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" /> Edit Question
-                              </button>
-                            )}
                           </div>
                           <h5 className="font-serif dark:text-slate-200 text-slate-800 text-md mb-2 font-bold">{q.question}</h5>
-                          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mb-2 font-mono uppercase tracking-wider">
+                          <p className="text-xs text-emerald-500 font-bold mb-2 font-mono uppercase tracking-wider">
                             Correct Response Node: {correctOpt.id}. {correctOpt.text}
                           </p>
-                          <div className="text-xs dark:text-slate-300 text-slate-700 bg-white dark:bg-slate-900 p-4 rounded-xl border dark:border-slate-800 border-slate-200 mt-2 font-medium">
-                            <strong className="block text-indigo-600 dark:text-indigo-400 text-[10px] uppercase tracking-widest mb-1.5 font-mono">Explanation:</strong>
+                          <div className="text-xs dark:text-slate-300 text-slate-700 bg-white/20 dark:bg-slate-950/40 p-4 rounded-xl border border-[#C5A059]/20 mt-2 font-medium">
+                            <strong className="block text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1.5 font-mono">Explanation:</strong>
                             {correctOpt.explanation}
                           </div>
                         </div>
@@ -1645,10 +1555,10 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             )}
           </div>
 
-          <div className="mt-10 flex flex-col sm:flex-row justify-center items-center gap-4 pt-8 border-t dark:border-slate-850 border-slate-200/60">
+          <div className="mt-10 flex flex-col sm:flex-row justify-center items-center gap-4 pt-8 border-t border-[#C5A059]/20">
             <button 
               onClick={resetToDashboard}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 border border-slate-300 dark:border-slate-700 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all duration-300 font-bold text-sm shadow-sm"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 border border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-[#C5A059]/10 rounded-xl transition-all duration-300 font-bold text-sm shadow-sm"
             >
               <Home className="w-5 h-5" /> Return to Sanctuary
             </button>
@@ -1661,7 +1571,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   () => startQuiz(activeQuiz)
                 );
               }}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all duration-300 font-bold text-sm shadow-md"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all duration-300 font-bold text-sm shadow-md shadow-[#D4AF37]/15"
             >
               <RotateCcw className="w-5 h-5" /> Retake Assessment
             </button>
@@ -1672,28 +1582,181 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     );
   };
 
-  /* STREAMING_CHUNK: Setting up main system shell container and royal overlays ... */
   return (
-    <div className={`min-h-screen transition-colors duration-300 font-sans selection:bg-[#c5a059]/30 dark:selection:bg-[#d4af37]/20 ${theme === 'dark' ? 'dark bg-[#0b0f19] text-slate-55' : 'bg-[#fdfbf7] text-slate-900'}`}>
-      
-      {/* Header theme utilities controller */}
-      <header className="w-full p-4 flex justify-end max-w-5xl mx-auto gap-2">
+    <div className={`min-h-screen transition-colors duration-300 font-sans selection:bg-[#C5A059]/30 ${theme === 'dark' ? 'dark bg-[#0B0F19] text-slate-100' : 'bg-[#FAF8F5] text-slate-900'}`}>
+      <style dangerouslySetInnerHTML={{__html: `
+        .animate-fade-in {
+          animation: fadeIn 0.3s ease-out forwards;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          height: 6px;
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent; 
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #C5A059; 
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #D4AF37; 
+        }
+      `}} />
+
+      {/* Dynamic Glowing background nodes for luxury glass feel */}
+      <div className="absolute top-10 left-1/4 w-[500px] h-[500px] bg-[#C5A059]/5 rounded-full blur-3xl pointer-events-none"></div>
+      <div className="absolute bottom-20 right-1/4 w-[400px] h-[400px] bg-[#D4AF37]/5 rounded-full blur-3xl pointer-events-none"></div>
+
+      <header className="w-full p-4 flex justify-end max-w-5xl mx-auto gap-2 relative z-10">
         <button 
           onClick={toggleTheme}
-          className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors border border-transparent dark:border-[#d4af37]/20 text-slate-600 dark:text-[#d4af37] shadow-sm dark:bg-slate-900 bg-white"
+          className="p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm"
           title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
         >
-          {theme === 'light' ? <Moon className="w-5 h-5 text-[#c5a059]" /> : <Sun className="w-5 h-5 text-[#d4af37]" />}
+          {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
         </button>
       </header>
 
-      {/* STREAMING_CHUNK: Managing administrative settings overlay components ... */}
+      <main className="pb-20 w-full flex justify-center relative z-10">
+        {currentView === 'dashboard' && renderDashboard()}
+        {currentView === 'add_quiz' && renderAddQuiz()}
+        {currentView === 'prompt' && renderPrompt()}
+        {currentView === 'taking_quiz' && renderTakingQuiz()}
+        {currentView === 'review' && renderReview()}
+      </main>
+
+      {/* ========================================== */}
+      {/* ADMIN LIVE EDIT MODAL (SOPHISTICATED OVERLAY) */}
+      {/* ========================================== */}
+      {showEditQuestionModal && editedQuestionData && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-lg flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-[#0d1321] border border-[#C5A059] rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl relative custom-scrollbar">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
+            
+            <div className="flex items-center justify-between mb-6 border-b border-[#C5A059]/20 pb-3">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-[#D4AF37]" />
+                <h3 className="font-serif text-xl font-bold text-slate-900 dark:text-white">Live Edit Question {editingQuestionIndex + 1}</h3>
+              </div>
+              <button 
+                onClick={() => setShowEditQuestionModal(false)}
+                className="text-slate-400 hover:text-slate-200"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-slate-800 dark:text-slate-200">
+              {/* Question text field */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] mb-1 font-mono">Question Text</label>
+                <textarea 
+                  value={editedQuestionData.question}
+                  onChange={(e) => setEditedQuestionData({
+                    ...editedQuestionData,
+                    question: e.target.value
+                  })}
+                  className="w-full px-4 py-2 border border-[#C5A059]/30 rounded-xl bg-white/20 dark:bg-slate-950/40 focus:outline-none focus:border-[#D4AF37]"
+                  rows="3"
+                />
+              </div>
+
+              {/* Options fields */}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] font-mono">Options & Explanations</label>
+                {editedQuestionData.options.map((opt, oIdx) => (
+                  <div key={opt.id} className="p-3 border border-[#C5A059]/15 rounded-xl bg-slate-500/5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-[#D4AF37] font-mono">{opt.id}</span>
+                      <input 
+                        type="text"
+                        value={opt.text}
+                        onChange={(e) => {
+                          const updatedOpts = [...editedQuestionData.options];
+                          updatedOpts[oIdx].text = e.target.value;
+                          setEditedQuestionData({ ...editedQuestionData, options: updatedOpts });
+                        }}
+                        className="flex-grow px-3 py-1 border border-[#C5A059]/20 rounded-lg bg-white/20 dark:bg-slate-950/20 focus:outline-none text-sm font-semibold"
+                        placeholder="Option Text"
+                      />
+                    </div>
+                    <div>
+                      <input 
+                        type="text"
+                        value={opt.explanation}
+                        onChange={(e) => {
+                          const updatedOpts = [...editedQuestionData.options];
+                          updatedOpts[oIdx].explanation = e.target.value;
+                          setEditedQuestionData({ ...editedQuestionData, options: updatedOpts });
+                        }}
+                        className="w-full px-3 py-1 border border-[#C5A059]/10 rounded-lg bg-white/10 dark:bg-slate-950/10 focus:outline-none text-xs"
+                        placeholder="Why is this option correct/incorrect?"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Select Correct Option */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] mb-1.5 font-mono">Correct Option</label>
+                <div className="flex gap-4">
+                  {editedQuestionData.options.map((opt, oIdx) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        const updatedOpts = editedQuestionData.options.map(o => ({
+                          ...o,
+                          isCorrect: o.id === opt.id
+                        }));
+                        setEditedQuestionData({ ...editedQuestionData, options: updatedOpts });
+                      }}
+                      className={`px-4 py-2 rounded-lg font-bold text-sm border transition-all ${
+                        opt.isCorrect 
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-sm'
+                          : 'border-[#C5A059]/20 text-slate-500 hover:bg-[#C5A059]/10'
+                      }`}
+                    >
+                      {opt.id}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 text-sm font-bold border-t border-[#C5A059]/20 mt-6 pt-4">
+              <button 
+                onClick={() => setShowEditQuestionModal(false)}
+                className="px-4 py-2 border border-[#C5A059]/30 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveEditedQuestion}
+                className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all shadow-md text-xs font-bold"
+              >
+                <Save className="w-4 h-4" /> Save Question Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* ADMIN LOGIN MODAL */}
+      {/* ========================================== */}
       {showAdminLoginModal && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="dark:bg-slate-900 bg-white border dark:border-[#d4af37]/30 border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
-              <div className="p-2 rounded-lg bg-amber-500/10 text-[#c5a059]">
+              <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
                 <Lock className="w-5 h-5" />
               </div>
               <h3 className="font-serif text-xl font-bold">Admin Portal Login</h3>
@@ -1703,13 +1766,13 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">Username</label>
                 <div className="relative">
-                  <User className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
+                  <User className="absolute left-3.5 top-3 w-4 h-4 text-slate-450" />
                   <input 
                     type="text" 
                     required
                     value={adminUsernameInput}
                     onChange={(e) => setAdminUsernameInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#c5a059] text-sm font-medium"
+                    className="w-full pl-10 pr-4 py-2.5 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] text-sm font-medium"
                     placeholder="Enter admin username"
                   />
                 </div>
@@ -1718,13 +1781,13 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">Password</label>
                 <div className="relative">
-                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
+                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-450" />
                   <input 
                     type="password" 
                     required
                     value={adminPasswordInput}
                     onChange={(e) => setAdminPasswordInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#c5a059] text-sm font-medium"
+                    className="w-full pl-10 pr-4 py-2.5 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] text-sm font-medium"
                     placeholder="••••••••••••"
                   />
                 </div>
@@ -1737,7 +1800,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 text-sm font-bold pt-4 border-t dark:border-slate-800">
+              <div className="flex justify-end gap-3 text-sm font-bold pt-4 border-t border-slate-200 dark:border-slate-800">
                 <button 
                   type="button"
                   onClick={() => {
@@ -1746,13 +1809,13 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                     setAdminUsernameInput('');
                     setAdminPasswordInput('');
                   }}
-                  className="px-4 py-2 border dark:border-slate-700/80 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
+                  className="px-4 py-2 border border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit"
-                  className="px-5 py-2 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all shadow-md text-xs font-bold"
+                  className="px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all shadow-md shadow-[#D4AF37]/15 text-xs font-bold"
                 >
                   Authorize Admin
                 </button>
@@ -1762,105 +1825,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         </div>
       )}
 
-      {/* STREAMING_CHUNK: Managing admin question edit modal controller ... */}
-      {showEditQuestionModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="dark:bg-slate-900 bg-white border dark:border-[#d4af37]/30 border-slate-200 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
-            
-            <div className="flex items-center justify-between mb-4 pb-2 border-b dark:border-slate-800 border-slate-100">
-              <div className="flex items-center gap-2 text-[#c5a059] dark:text-[#d4af37]">
-                <Edit3 className="w-5 h-5" />
-                <h3 className="font-serif text-xl font-bold">Edit Question {editQuestionIndex + 1}</h3>
-              </div>
-              <button 
-                onClick={() => setShowEditQuestionModal(false)}
-                className="p-1 text-slate-400 hover:text-[#c5a059] rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-grow">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">
-                  Question Text
-                </label>
-                <textarea 
-                  value={editQuestionText}
-                  onChange={(e) => setEditQuestionText(e.target.value)}
-                  className="w-full px-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#c5a059] text-sm font-semibold h-20 resize-none"
-                />
-              </div>
-
-              <div className="space-y-4">
-                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 font-mono">
-                  Options and Explanations
-                </label>
-                {editQuestionOptions.map((opt, idx) => (
-                  <div key={opt.id} className="p-4 border dark:border-slate-800 border-slate-200 rounded-xl space-y-3 dark:bg-slate-950/40 bg-slate-50/50">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-[#c5a059] dark:text-[#d4af37]">
-                        Option {opt.id}
-                      </span>
-                      <label className="flex items-center gap-2 text-xs font-bold font-mono cursor-pointer">
-                        <input 
-                          type="radio" 
-                          name="correctOptionRadio"
-                          checked={opt.isCorrect}
-                          onChange={() => handleSelectCorrectOption(opt.id)}
-                          className="accent-[#c5a059] dark:accent-[#d4af37]"
-                        />
-                        <span className={opt.isCorrect ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}>
-                          Is Correct Answer
-                        </span>
-                      </label>
-                    </div>
-
-                    <input 
-                      type="text"
-                      value={opt.text}
-                      onChange={(e) => handleEditOptionText(idx, e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border rounded-lg dark:bg-slate-900 dark:border-slate-700 focus:outline-none focus:border-[#c5a059]"
-                      placeholder="Option Text"
-                    />
-
-                    <textarea
-                      value={opt.explanation}
-                      onChange={(e) => handleEditOptionExplanation(idx, e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs border rounded-lg dark:bg-slate-900 dark:border-slate-700 focus:outline-none focus:border-[#c5a059] h-14 resize-none"
-                      placeholder="Why is this option correct or incorrect?"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 text-sm font-bold pt-4 mt-4 border-t dark:border-slate-800 border-slate-100">
-              <button 
-                type="button"
-                onClick={() => setShowEditQuestionModal(false)}
-                className="px-4 py-2 border dark:border-slate-700 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleSaveEditedQuestion}
-                className="px-5 py-2 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all shadow-md text-xs font-bold flex items-center gap-1"
-              >
-                <Save className="w-4 h-4" /> Save Question Updates
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* ========================================== */}
+      {/* SUBGROUP CREATION MODAL */}
+      {/* ========================================== */}
       {showGroupModal && (
-        <div className="fixed inset-0 bg-slate-955/65 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-violet-500"></div>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
-              <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-500">
+              <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
                 <FolderPlus className="w-5 h-5" />
               </div>
               <h3 className="font-serif text-xl font-bold">New Category / Topic Folder</h3>
@@ -1868,33 +1841,33 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono font-sans">
                   Group Folder Name
                 </label>
                 <input 
                   type="text" 
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
-                  className="w-full px-4 py-2.5 border rounded-xl dark:bg-slate-955 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-sm font-semibold"
+                  className="w-full px-4 py-2.5 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] text-sm font-semibold"
                   placeholder="e.g. Cardiology, Hematology, CVS..."
                 />
               </div>
 
-              <div className="flex justify-end gap-3 text-sm font-bold pt-4 border-t dark:border-slate-800">
+              <div className="flex justify-end gap-3 text-sm font-bold pt-4 border-t border-slate-200 dark:border-slate-800">
                 <button 
                   type="button"
                   onClick={() => {
                     setShowGroupModal(false);
                     setNewGroupName('');
                   }}
-                  className="px-4 py-2 border dark:border-slate-700/80 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
+                  className="px-4 py-2 border border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
                 >
                   Cancel
                 </button>
                 <button 
                   onClick={handleCreateGroup}
                   disabled={!newGroupName.trim()}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition-all shadow-md shadow-indigo-500/15 text-xs font-bold"
+                  className="px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all shadow-md shadow-[#D4AF37]/15 text-xs font-bold"
                 >
                   Create Group
                 </button>
@@ -1904,12 +1877,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         </div>
       )}
 
+      {/* ========================================== */}
+      {/* SAFE CONFIRMATION DIALOG MODAL */}
+      {/* ========================================== */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-955/65 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="dark:bg-slate-900 bg-white border dark:border-[#d4af37]/20 border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-4">
-              <div className="p-2 rounded-lg bg-amber-500/10 text-[#c5a059]">
+              <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
                 <AlertCircle className="w-5 h-5" />
               </div>
               <h3 className="font-serif text-xl font-bold">{confirmModal.title}</h3>
@@ -1917,16 +1893,16 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             <p className="dark:text-slate-400 text-slate-600 text-sm leading-relaxed mb-8 font-medium">
               {confirmModal.message}
             </p>
-            <div className="flex justify-end gap-3 text-sm font-bold border-t dark:border-slate-800 pt-4">
+            <div className="flex justify-end gap-3 text-sm font-bold border-t border-slate-200 dark:border-slate-800 pt-4">
               <button 
                 onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-                className="px-4 py-2 border dark:border-slate-700 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
+                className="px-4 py-2 border border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
               >
                 Cancel
               </button>
               <button 
                 onClick={confirmModal.action}
-                className="px-5 py-2 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all shadow-md text-xs font-bold"
+                className="px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all shadow-md shadow-[#D4AF37]/15 text-xs font-bold"
               >
                 Confirm
               </button>
@@ -1934,14 +1910,6 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           </div>
         </div>
       )}
-
-      <main className="pb-20 w-full flex justify-center">
-        {currentView === 'dashboard' && renderDashboard()}
-        {currentView === 'add_quiz' && renderAddQuiz()}
-        {currentView === 'prompt' && renderPrompt()}
-        {currentView === 'taking_quiz' && renderTakingQuiz()}
-        {currentView === 'review' && renderReview()}
-      </main>
     </div>
   );
 }
