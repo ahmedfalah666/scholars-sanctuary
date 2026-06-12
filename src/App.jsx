@@ -422,7 +422,7 @@ The JSON must exactly follow this schema:
   const handleAdminLogin = (e) => {
     e.preventDefault();
     if (adminUsernameInput === 'admin' && adminPasswordInput === 'ScholarAdmin2026!') {
-      setIsAdmin(true);
+      setIsAdmin(false);
       localStorage.setItem('isSanctuaryAdmin', 'true');
       setShowAdminLoginModal(false);
       setAdminUsernameInput('');
