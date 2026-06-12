@@ -1,3 +1,4 @@
+/* STREAMING_CHUNK: Importing core dependencies... */
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   BookOpen, 
@@ -32,9 +33,10 @@ import {
   Edit3,
   Undo,
   Sparkles,
-  ArrowRight,
   Award,
-  BookMarked
+  BookMarked,
+  Settings,
+  Save
 } from "lucide-react";
 
 // Pull credentials from Netlify environment variables (using Vite syntax)
@@ -42,6 +44,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 export default function App() {
+  /* STREAMING_CHUNK: Initializing state variables... */
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem('academicTheme');
     return savedTheme ? savedTheme : 'light';
@@ -68,6 +71,7 @@ export default function App() {
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editGroupName, setEditGroupName] = useState('');
 
+  // View state tracking
   const [currentView, setCurrentView] = useState('dashboard'); 
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -78,6 +82,12 @@ export default function App() {
   const [copySuccess, setCopySuccess] = useState('');
   
   const [correctUncertainOpen, setCorrectUncertainOpen] = useState(false);
+
+  // Admin Question Editing State
+  const [showEditQuestionModal, setShowEditQuestionModal] = useState(false);
+  const [editQuestionIndex, setEditQuestionIndex] = useState(null);
+  const [editQuestionText, setEditQuestionText] = useState('');
+  const [editQuestionOptions, setEditQuestionOptions] = useState([]);
 
   const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
   const supabaseRef = useRef(null);
@@ -99,6 +109,7 @@ export default function App() {
     return { uid: savedUid };
   });
 
+  /* STREAMING_CHUNK: Dynamically loading database script... */
   useEffect(() => {
     const loadSupabaseScript = () => {
       if (SUPABASE_URL && SUPABASE_URL.trim() !== "") {
@@ -138,6 +149,7 @@ export default function App() {
     loadSupabaseScript();
   }, []);
 
+  /* STREAMING_CHUNK: Synchronizing remote and local data ... */
   useEffect(() => {
     loadData();
   }, [isSupabaseLoaded]);
@@ -206,8 +218,9 @@ export default function App() {
     localStorage.setItem('academicTheme', theme);
   }, [theme]);
 
+  /* STREAMING_CHUNK: Configuring physical key interactions ... */
   useEffect(() => {
-    if (currentView !== 'taking_quiz' || !activeQuiz) return;
+    if (currentView !== 'taking_quiz' || !activeQuiz || showEditQuestionModal) return;
 
     const handleKeyDown = (e) => {
       if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
@@ -252,8 +265,9 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [currentView, activeQuiz, currentQuestionIndex, userAnswers, uncertainQuestions]);
+  }, [currentView, activeQuiz, currentQuestionIndex, userAnswers, uncertainQuestions, showEditQuestionModal]);
 
+  /* STREAMING_CHUNK: Formatting AI exam prompt templates ... */
   const aiPrompt = `You are acting as an expert university professor and exam designer. 
 
 I have uploaded two types of sources into this notebook:
@@ -306,11 +320,11 @@ The JSON must exactly follow this schema:
 
 Ensure there is a clear, concise explanation for EVERY option (both right and wrong), as these will be revealed to me when I select an answer. Generate the 20 questions now.`;
 
+  /* STREAMING_CHUNK: Managing category and group additions ... */
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     
-    // ⚠️ CRITICAL FIX: Omit "id" property completely if using Supabase to let Postgres generate standard UUIDs!
     const newGroupObj = {
       name: newGroupName.trim(),
       parent_id: currentGroupId
@@ -430,6 +444,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     setCurrentView('dashboard');
   };
 
+  /* STREAMING_CHUNK: Managing database quiz operations ... */
   const handleAddQuiz = async () => {
     try {
       setErrorMsg('');
@@ -474,6 +489,76 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     }
   };
 
+  /* STREAMING_CHUNK: Setting up Question Editing functionality ... */
+  const openEditQuestionModal = (idx) => {
+    const q = activeQuiz.questions[idx];
+    setEditQuestionIndex(idx);
+    setEditQuestionText(q.question);
+    // Deep clone options
+    setEditQuestionOptions(JSON.parse(JSON.stringify(q.options)));
+    setShowEditQuestionModal(true);
+  };
+
+  const handleSaveEditedQuestion = async () => {
+    if (!activeQuiz || editQuestionIndex === null) return;
+
+    // Build updated questions array
+    const updatedQuestions = [...activeQuiz.questions];
+    updatedQuestions[editQuestionIndex] = {
+      ...updatedQuestions[editQuestionIndex],
+      question: editQuestionText,
+      options: editQuestionOptions
+    };
+
+    const updatedQuiz = {
+      ...activeQuiz,
+      questions: updatedQuestions
+    };
+
+    // Update state immediately
+    setActiveQuiz(updatedQuiz);
+    setQuizzes(quizzes.map(q => q.id === activeQuiz.id ? updatedQuiz : q));
+
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    if (isSupabaseReady) {
+      try {
+        const { error } = await supabaseRef.current
+          .from('quizzes')
+          .update({ questions: updatedQuestions })
+          .eq('id', activeQuiz.id);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Cloud question update failed:", err);
+      }
+    } else {
+      const localQuizzes = quizzes.map(q => q.id === activeQuiz.id ? updatedQuiz : q);
+      saveLocalFallback(localQuizzes, null, null);
+    }
+
+    setShowEditQuestionModal(false);
+    setEditQuestionIndex(null);
+  };
+
+  const handleEditOptionText = (optIdx, val) => {
+    const nextOpts = [...editQuestionOptions];
+    nextOpts[optIdx].text = val;
+    setEditQuestionOptions(nextOpts);
+  };
+
+  const handleEditOptionExplanation = (optIdx, val) => {
+    const nextOpts = [...editQuestionOptions];
+    nextOpts[optIdx].explanation = val;
+    setEditQuestionOptions(nextOpts);
+  };
+
+  const handleSelectCorrectOption = (optId) => {
+    const nextOpts = editQuestionOptions.map(o => ({
+      ...o,
+      isCorrect: o.id === optId
+    }));
+    setEditQuestionOptions(nextOpts);
+  };
+
   const deleteQuiz = async (id) => {
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
@@ -499,6 +584,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     }
   };
 
+  /* STREAMING_CHUNK: Managing persistent assessment states ... */
   const updatePersistentState = async (quizId, updatedProgress) => {
     const nextStates = {
       ...quizStates,
@@ -701,16 +787,17 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     return { incorrect, correctButUncertain };
   };
 
+  /* STREAMING_CHUNK: Setting up elegant footer component with royal gold themes... */
   const renderSignatureFooter = () => (
     <footer className="w-full text-center py-8 border-t dark:border-slate-800/80 border-slate-200/80 mt-20 text-xs text-slate-500 font-serif">
       <div className="flex flex-col items-center justify-center gap-3">
-        <span className="italic text-slate-600 dark:text-slate-400 font-semibold text-[13px] tracking-wide relative">
-          <Sparkles className="w-4 h-4 text-amber-500 inline-block mr-1.5 -mt-0.5 animate-pulse" />
+        <span className="italic text-amber-700 dark:text-[#d4af37] font-semibold text-[13px] tracking-wide relative">
+          <Sparkles className="w-4 h-4 text-[#c5a059] dark:text-[#d4af37] inline-block mr-1.5 -mt-0.5" />
           Thanks to Allah for His Blessings
         </span>
         <div className="flex flex-col items-center gap-0.5 text-slate-500">
           <span className="text-[10px] uppercase tracking-widest text-slate-400 font-sans">Designed & Developed by</span>
-          <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider text-sm transition-colors duration-300">
+          <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider text-sm">
             Ahmed Falah Hasan
           </span>
         </div>
@@ -736,20 +823,21 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
   const currentLevelGroups = groups.filter(g => g.parent_id === currentGroupId);
   const currentLevelQuizzes = quizzes.filter(q => q.group_id === currentGroupId);
 
+  /* STREAMING_CHUNK: Formatting dashboard views with royal colors... */
   const renderDashboard = () => (
     <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
         {/* Navigation & Admin Panel bar */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-10 border-b dark:border-slate-800/60 border-slate-200/80 pb-6 gap-6">
           <div className="flex items-center gap-3.5 group">
-            <div className="p-2.5 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl shadow-lg shadow-indigo-500/20 transform group-hover:scale-105 transition-all duration-300">
+            <div className="p-2.5 bg-gradient-to-tr from-[#9a7b3c] to-[#c5a059] rounded-xl shadow-lg shadow-amber-500/10">
               <GraduationCap className="w-8 h-8 text-white" />
             </div>
             <div>
               <h1 className="text-3xl md:text-4xl font-serif tracking-wide text-slate-900 dark:text-white font-black leading-tight">
                 Scholar's Sanctuary
               </h1>
-              <p className="text-xs text-slate-500 tracking-wider uppercase font-sans font-semibold mt-0.5">Academic Assessment Hub</p>
+              <p className="text-xs text-[#c5a059] dark:text-[#d4af37] tracking-wider uppercase font-sans font-bold mt-0.5">Academic Assessment Hub</p>
             </div>
           </div>
           <div className="flex flex-row gap-2.5 items-center">
@@ -757,19 +845,19 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               <div className="flex flex-wrap gap-2 items-center">
                 <button 
                   onClick={() => setCurrentView('prompt')}
-                  className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700/80 border-slate-300/80 dark:bg-slate-800/40 bg-white dark:text-slate-300 text-slate-600 dark:hover:bg-slate-800 hover:bg-slate-100 transition-all duration-300 rounded-lg text-sm font-semibold shadow-sm"
+                  className="flex items-center gap-2 px-4 py-2 border dark:border-[#d4af37]/30 border-[#c5a059]/30 dark:bg-slate-800/40 bg-white dark:text-[#d4af37] text-amber-800 hover:bg-[#c5a059]/10 transition-all rounded-lg text-sm font-bold shadow-sm"
                 >
-                  <FileText className="w-4 h-4 text-indigo-500" /> Exam Prompt
+                  <FileText className="w-4 h-4 text-[#c5a059] dark:text-[#d4af37]" /> Exam Prompt
                 </button>
                 <button 
                   onClick={() => setCurrentView('add_quiz')}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:opacity-95 transition-all duration-300 rounded-lg shadow-md shadow-indigo-500/15 text-sm font-semibold"
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] text-white hover:opacity-95 transition-all rounded-lg shadow-md text-sm font-bold"
                 >
                   <Plus className="w-4 h-4" /> Import Quiz
                 </button>
                 <button 
                   onClick={handleAdminLogout}
-                  className="flex items-center gap-1.5 px-3 py-2 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 dark:hover:bg-rose-950/20 hover:bg-rose-50 rounded-lg text-xs font-bold transition-all duration-300"
+                  className="flex items-center gap-1.5 px-3 py-2 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 dark:hover:bg-rose-950/20 hover:bg-rose-50 rounded-lg text-xs font-bold transition-all"
                 >
                   Logout Admin
                 </button>
@@ -777,46 +865,48 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             ) : (
               <button 
                 onClick={() => setShowAdminLoginModal(true)}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-100/80 dark:bg-slate-850 dark:hover:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-semibold border border-slate-200/50 dark:border-slate-700/60 shadow-sm transition-all duration-300"
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-semibold border border-slate-200 dark:border-[#d4af37]/20 shadow-sm transition-all"
               >
-                <Lock className="w-4 h-4 text-indigo-500" /> Admin Login
+                <Lock className="w-4 h-4 text-[#c5a059]" /> Admin Login
               </button>
             )}
           </div>
         </div>
 
-        {/* Dynamic Glowing Banner Section */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-8 md:p-10 mb-8 shadow-xl border border-indigo-500/10">
-          <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-indigo-500/10 to-violet-500/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
-          <div className="absolute bottom-0 left-0 w-64 h-64 bg-indigo-500/5 rounded-full blur-2xl -ml-20 -mb-20 pointer-events-none"></div>
-          
-          <div className="relative z-10 max-w-2xl">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-xs font-bold text-indigo-300 mb-4 font-mono uppercase tracking-widest">
-              <Sparkles className="w-3.5 h-3.5" /> Portal Operational
-            </span>
-            <h2 className="text-2xl md:text-3xl font-serif font-bold text-white mb-3 tracking-wide">
-              Welcome to Your Personal Exam Suite
-            </h2>
-            <p className="text-slate-350 text-sm leading-relaxed mb-6 font-medium">
-              A high-precision testing environment configured for academic excellence. Upload past questions or notes, generate quizzes, and monitor your concept confidence.
-            </p>
+        {/* Dynamic Glowing Banner Section - ONLY visible on Home (currentGroupId is null) */}
+        {currentGroupId === null && (
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 p-8 md:p-10 mb-8 shadow-xl border border-[#d4af37]/20">
+            <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-[#d4af37]/10 to-transparent rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
+            
+            <div className="relative z-10 max-w-2xl">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#d4af37]/10 border border-[#d4af37]/30 rounded-full text-xs font-bold text-[#d4af37] mb-4 font-mono uppercase tracking-widest">
+                <Sparkles className="w-3.5 h-3.5" /> Portal Operational
+              </span>
+              <h2 className="text-2xl md:text-3xl font-serif font-bold text-white mb-3 tracking-wide">
+                Welcome to Your Personal Exam Suite
+              </h2>
+              {/* FIXED CONTRAST: High readability for dark-on-dark welcome banner */}
+              <p className="text-slate-300 dark:text-slate-300 text-sm leading-relaxed mb-6 font-medium">
+                A high-precision testing environment configured for academic excellence. Upload past questions or notes, generate quizzes, and monitor your concept confidence.
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Breadcrumb Navigation Trail */}
-        <div className="flex items-center gap-2 mb-8 text-xs text-slate-500 dark:text-slate-400 font-bold tracking-wider uppercase bg-slate-100/50 dark:bg-slate-900/30 px-4 py-2.5 rounded-lg border border-slate-200/30 dark:border-slate-800/30 flex-wrap">
+        <div className="flex items-center gap-2 mb-8 text-xs text-slate-500 dark:text-slate-300 font-bold tracking-wider uppercase bg-slate-100 dark:bg-slate-900/40 px-4 py-2.5 rounded-lg border border-slate-200 dark:border-[#d4af37]/10 flex-wrap">
           <button 
             onClick={() => setCurrentGroupId(null)}
-            className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors flex items-center gap-1"
+            className="hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-colors flex items-center gap-1"
           >
             <Home className="w-3.5 h-3.5" /> HOME
           </button>
           {getBreadcrumbs().map((b, idx) => (
             <React.Fragment key={b.id}>
-              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+              <ChevronRight className="w-3.5 h-3.5 text-[#c5a059]" />
               <button 
                 onClick={() => setCurrentGroupId(b.id)}
-                className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                className="hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-colors"
               >
                 {b.name}
               </button>
@@ -826,10 +916,10 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
 
         {/* Admin controls and Folder Modification */}
         {isAdmin && (
-          <div className="flex flex-wrap gap-2.5 mb-8 bg-slate-100/50 dark:bg-slate-900/40 p-4 rounded-xl border border-slate-200/50 dark:border-slate-800/80 backdrop-blur-md">
+          <div className="flex flex-wrap gap-2.5 mb-8 bg-slate-100 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-[#d4af37]/20 backdrop-blur-md">
             <button 
               onClick={() => setShowGroupModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-all duration-300 text-xs font-bold shadow-md shadow-indigo-500/10"
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] hover:opacity-95 text-white rounded-lg transition-all text-xs font-bold shadow-md shadow-amber-500/10"
             >
               <FolderPlus className="w-4 h-4" /> Add Subgroup / Topic
             </button>
@@ -842,26 +932,26 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                     setEditGroupName(currentGroupObj.name);
                   }
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 border dark:border-slate-700 border-slate-300/80 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800/80 transition-all duration-300 text-xs font-semibold"
+                className="flex items-center gap-1.5 px-4 py-2 border dark:border-[#d4af37]/30 border-[#c5a059]/30 text-slate-700 dark:text-[#d4af37] rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition-all text-xs font-bold"
               >
-                <Edit3 className="w-4 h-4 text-indigo-500" /> Rename Current Group
+                <Edit3 className="w-4 h-4 text-[#c5a059]" /> Rename Current Group
               </button>
             )}
           </div>
         )}
 
         {editingGroupId && (
-          <div className="mb-6 p-4 border dark:border-indigo-900/40 border-indigo-200/60 bg-indigo-50/10 dark:bg-indigo-950/10 rounded-xl flex flex-wrap items-center gap-4 animate-fade-in">
-            <span className="text-sm font-bold dark:text-slate-300">Rename Group:</span>
+          <div className="mb-6 p-4 border dark:border-[#d4af37]/30 border-[#c5a059]/30 bg-[#c5a059]/5 rounded-xl flex flex-wrap items-center gap-4">
+            <span className="text-sm font-bold dark:text-[#d4af37]">Rename Group:</span>
             <input 
               type="text"
               value={editGroupName}
               onChange={(e) => setEditGroupName(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg dark:bg-slate-900 dark:border-slate-700 text-sm focus:ring-1 focus:ring-indigo-500 focus:outline-none focus:border-indigo-500"
+              className="px-3 py-1.5 border rounded-lg dark:bg-slate-900 dark:border-slate-700 text-sm focus:ring-1 focus:ring-[#c5a059] focus:outline-none focus:border-[#c5a059]"
             />
             <button 
               onClick={handleUpdateGroup}
-              className="px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-all shadow-sm"
+              className="px-4 py-1.5 bg-[#c5a059] text-white rounded-lg text-xs font-bold hover:bg-[#a98442] transition-all"
             >
               Save
             </button>
@@ -879,20 +969,20 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           {currentLevelGroups.length > 0 && (
             <div className="space-y-4">
               <h3 className="text-lg font-serif dark:text-slate-200 text-slate-800 font-bold flex items-center gap-2">
-                <Folder className="w-5 h-5 text-indigo-500 fill-indigo-500/10" /> Academic Subgroups
+                <Folder className="w-5 h-5 text-[#c5a059] dark:text-[#d4af37] fill-[#c5a059]/10" /> Academic Subgroups
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {currentLevelGroups.map(grp => (
                   <div 
                     key={grp.id}
-                    className="relative group bg-white dark:bg-slate-900 border dark:border-slate-800/80 border-slate-200 rounded-xl p-5 flex items-center justify-between hover:shadow-md hover:border-indigo-500/40 dark:hover:border-indigo-500/40 hover:-translate-y-0.5 transition-all duration-300 cursor-pointer"
+                    className="relative group bg-white dark:bg-slate-900 border dark:border-[#d4af37]/20 border-slate-200 rounded-xl p-5 flex items-center justify-between hover:shadow-md hover:border-[#c5a059] dark:hover:border-[#d4af37] transition-all cursor-pointer"
                     onClick={() => setCurrentGroupId(grp.id)}
                   >
                     <div className="flex items-center gap-4">
-                      <div className="p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-500 group-hover:scale-105 transition-transform duration-300">
-                        <Folder className="w-6 h-6 fill-indigo-500/10" />
+                      <div className="p-2.5 rounded-lg bg-[#c5a059]/10 text-[#c5a059] dark:text-[#d4af37]">
+                        <Folder className="w-6 h-6 fill-amber-500/10" />
                       </div>
-                      <span className="font-serif font-bold text-md dark:text-slate-100 text-slate-800 pr-6 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                      <span className="font-serif font-bold text-md dark:text-slate-100 text-slate-800 pr-6 group-hover:text-[#c5a059] dark:group-hover:text-[#d4af37] transition-colors">
                         {grp.name}
                       </span>
                     </div>
@@ -922,12 +1012,12 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           {/* Assessments / Exams Grid Section */}
           <div className="space-y-4">
             <h3 className="text-lg font-serif dark:text-slate-200 text-slate-800 font-bold flex items-center gap-2">
-              <Library className="w-5 h-5 text-indigo-500" /> Assessments
+              <Library className="w-5 h-5 text-[#c5a059] dark:text-[#d4af37]" /> Assessments
             </h3>
             
             {currentLevelGroups.length === 0 && currentLevelQuizzes.length === 0 ? (
-              <div className="text-center py-20 border-2 border-dashed dark:border-slate-800 border-slate-350 rounded-2xl dark:bg-slate-900/10 bg-slate-50/50 px-6 max-w-xl mx-auto">
-                <BookMarked className="w-12 h-12 mx-auto dark:text-slate-700 text-slate-400 mb-4 animate-bounce" />
+              <div className="text-center py-20 border-2 border-dashed dark:border-[#d4af37]/30 border-slate-350 rounded-2xl dark:bg-slate-900/10 bg-slate-50/50 px-6 max-w-xl mx-auto">
+                <BookMarked className="w-12 h-12 mx-auto dark:text-[#d4af37] text-[#c5a059] mb-4" />
                 <p className="dark:text-slate-300 text-slate-600 font-serif text-lg font-bold">This classroom section is empty.</p>
                 <p className="text-slate-400 text-xs mt-1">No folders or assessments have been published inside this hierarchy.</p>
                 {currentGroupId && (
@@ -938,7 +1028,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                         setCurrentGroupId(currentGroupObj.parent_id);
                       }
                     }}
-                    className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 border rounded-lg text-xs font-bold dark:border-slate-700 dark:hover:bg-slate-800 hover:bg-slate-100 transition-all"
+                    className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 border rounded-lg text-xs font-bold dark:border-slate-700 dark:hover:bg-slate-850 hover:bg-slate-100 transition-all"
                   >
                     <Undo className="w-3.5 h-3.5" /> Back Up
                   </button>
@@ -953,8 +1043,8 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   const answeredCount = state?.userAnswers ? Object.keys(state.userAnswers).length : 0;
                   
                   return (
-                    <div key={quiz.id} className="group relative dark:bg-slate-900 bg-white border dark:border-slate-800/80 border-slate-200/80 p-6 rounded-2xl hover:shadow-xl hover:border-indigo-500/20 dark:hover:border-indigo-500/20 transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-sm">
-                      <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500/20 dark:bg-indigo-500/10 group-hover:bg-indigo-500 transition-colors duration-300"></div>
+                    <div key={quiz.id} className="group relative dark:bg-slate-900 bg-white border dark:border-[#d4af37]/20 border-slate-200/80 p-6 rounded-2xl hover:shadow-xl hover:border-[#c5a059]/40 dark:hover:border-[#d4af37]/40 transition-all duration-350 flex flex-col justify-between overflow-hidden shadow-sm">
+                      <div className="absolute top-0 left-0 w-1.5 h-full bg-[#c5a059]/20 dark:bg-[#d4af37]/10 group-hover:bg-[#c5a059] dark:group-hover:bg-[#d4af37] transition-colors duration-300"></div>
                       
                       <div className="pl-2">
                         {isAdmin && (
@@ -971,19 +1061,19 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                           </div>
                         )}
                         
-                        <h3 className="text-xl font-serif dark:text-slate-100 text-slate-800 mb-2 pr-8 leading-snug font-bold group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                        <h3 className="text-xl font-serif dark:text-slate-100 text-slate-800 mb-2 pr-8 leading-snug font-bold group-hover:text-[#c5a059] dark:group-hover:text-[#d4af37] transition-colors">
                           {quiz.quiz_title}
                         </h3>
                         
                         <div className="flex flex-wrap gap-2.5 mb-6 items-center">
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider dark:text-slate-400 text-slate-500 dark:bg-slate-850 bg-slate-100 px-2.5 py-1 rounded-md">
-                            <BookOpen className="w-3.5 h-3.5 text-indigo-500" />
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider dark:text-slate-400 text-slate-500 dark:bg-slate-800 bg-slate-100 px-2.5 py-1 rounded-md">
+                            <BookOpen className="w-3.5 h-3.5 text-[#c5a059] dark:text-[#d4af37]" />
                             {quiz.questions ? quiz.questions.length : 0} Questions
                           </span>
                           {isStarted && (
                             <>
                               <span className="text-slate-400 text-xs">•</span>
-                              <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md ${isCompleted ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'}`}>
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md ${isCompleted ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-[#c5a059] dark:text-[#d4af37]'}`}>
                                 {isCompleted ? <Award className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
                                 {isCompleted ? 'Completed' : `In Progress (${answeredCount}/${quiz.questions.length})`}
                               </span>
@@ -996,15 +1086,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                         {!isStarted ? (
                           <button 
                             onClick={() => startQuiz(quiz)}
-                            className="w-full flex items-center justify-center gap-2 py-3 dark:bg-slate-800/80 bg-slate-50 dark:hover:bg-indigo-600 hover:bg-indigo-50 dark:text-slate-200 text-indigo-600 hover:text-indigo-800 dark:hover:text-white rounded-xl transition-all duration-300 font-bold text-sm shadow-inner"
+                            className="w-full flex items-center justify-center gap-2 py-3 dark:bg-slate-850 bg-slate-50 dark:hover:bg-[#d4af37] hover:bg-[#c5a059]/10 dark:text-slate-200 text-[#c5a059] hover:text-[#a98442] dark:hover:text-slate-950 rounded-xl transition-all font-bold text-sm shadow-inner"
                           >
-                            <Play className="w-4 h-4 fill-indigo-500 dark:fill-slate-200 inline" /> Start Assessment
+                            <Play className="w-4 h-4 fill-[#c5a059] dark:fill-slate-200 inline" /> Start Assessment
                           </button>
                         ) : isCompleted ? (
                           <div className="grid grid-cols-2 gap-3">
                             <button 
                               onClick={() => reviewSavedQuiz(quiz)}
-                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white rounded-xl transition-all duration-300 text-sm font-bold shadow-md shadow-emerald-500/10"
+                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white rounded-xl transition-all text-sm font-bold shadow-md shadow-emerald-500/10"
                             >
                               <Eye className="w-4 h-4" /> Review
                             </button>
@@ -1019,19 +1109,21 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                                   }
                                 );
                               }}
-                              className="flex items-center justify-center gap-2 py-2.5 dark:bg-slate-800 bg-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-700 rounded-xl transition-all duration-300 text-sm font-bold"
+                              className="flex items-center justify-center gap-2 py-2.5 dark:bg-slate-800 bg-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-700 rounded-xl transition-all text-sm font-bold"
                             >
                               <RotateCcw className="w-4 h-4" /> Reset
                             </button>
                           </div>
                         ) : (
                           <div className="grid grid-cols-2 gap-3">
+                            {/* FIXED CONTRAST: High class golden resume button without dark on dark or low contrast colors */}
                             <button 
                               onClick={() => continueQuiz(quiz)}
-                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:opacity-95 text-white rounded-xl transition-all duration-300 text-sm font-bold shadow-md shadow-amber-500/10"
+                              className="flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] hover:opacity-95 text-white rounded-xl transition-all text-sm font-bold shadow-md shadow-amber-500/10"
                             >
                               <Play className="w-4 h-4" /> Resume
                             </button>
+                            {/* QUIETER ANIMATION: Gentle, non-jumping action buttons */}
                             <button 
                               onClick={() => {
                                 showConfirm(
@@ -1040,7 +1132,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                                   () => startQuiz(quiz)
                                 );
                               }}
-                              className="flex items-center justify-center gap-2 py-2.5 dark:bg-slate-800 bg-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-700 rounded-xl transition-all duration-300 text-sm font-bold"
+                              className="flex items-center justify-center gap-2 py-2.5 dark:bg-slate-800 bg-slate-100 hover:bg-slate-250 dark:hover:bg-slate-700 dark:text-slate-300 text-slate-750 rounded-xl transition-all text-sm font-bold"
                             >
                               <RotateCcw className="w-4 h-4" /> Restart
                             </button>
@@ -1059,17 +1151,18 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     </div>
   );
 
+  /* STREAMING_CHUNK: Formatting import and create quiz screens... */
   const renderAddQuiz = () => (
     <div className="w-full max-w-3xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
-        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 mb-8 transition-colors duration-300 font-bold text-sm">
+        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#c5a059] dark:hover:text-[#d4af37] mb-8 transition-colors font-bold text-sm">
           <ChevronLeft className="w-4 h-4" /> Back to Dashboard
         </button>
 
         <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-violet-500"></div>
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
           <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-3 flex items-center gap-3 font-bold">
-            <FileText className="w-6 h-6 text-indigo-500" /> Import Academic Assessment
+            <FileText className="w-6 h-6 text-[#c5a059]" /> Import Academic Assessment
           </h2>
           <p className="dark:text-slate-400 text-slate-600 mb-6 text-sm">
             Paste the JSON generated by your AI tool. It will be cataloged under the current folder pathway.
@@ -1078,7 +1171,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           <textarea
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
-            className="w-full h-96 dark:bg-slate-950 bg-slate-50 border dark:border-slate-800 border-slate-300 rounded-xl p-4 dark:text-slate-300 text-slate-800 font-mono text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none shadow-inner"
+            className="w-full h-96 dark:bg-slate-950 bg-slate-50 border dark:border-slate-800 border-slate-300 rounded-xl p-4 dark:text-slate-300 text-slate-800 font-mono text-xs focus:outline-none focus:border-[#c5a059] focus:ring-1 focus:ring-[#c5a059] transition-all resize-none shadow-inner"
             placeholder='{"quizTitle": "...", "questions": [...]}'
           />
           
@@ -1093,7 +1186,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             <button 
               onClick={handleAddQuiz}
               disabled={!jsonInput.trim()}
-              className="w-full sm:w-auto px-8 py-3 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all duration-300 font-bold shadow-md shadow-indigo-500/20"
+              className="w-full sm:w-auto px-8 py-3 bg-[#c5a059] text-white hover:bg-[#a98442] disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all font-bold shadow-md"
             >
               Upload Quiz to Database
             </button>
@@ -1104,20 +1197,21 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     </div>
   );
 
+  /* STREAMING_CHUNK: Formatting admin prompt guide ... */
   const renderPrompt = () => (
     <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
-        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 mb-8 transition-colors duration-300 font-bold text-sm">
+        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#c5a059] dark:hover:text-[#d4af37] mb-8 transition-colors font-bold text-sm">
           <ChevronLeft className="w-4 h-4" /> Back to Dashboard
         </button>
 
         <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-violet-500"></div>
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <h2 className="text-2xl font-serif dark:text-white text-slate-900 font-bold">AI Exam Generator Prompt</h2>
             <button 
               onClick={copyToClipboard}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 dark:bg-slate-800 bg-slate-100 dark:text-slate-200 text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-400 border dark:border-slate-700 border-slate-300 transition-all duration-300 rounded-xl text-xs font-bold shadow-sm"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 dark:bg-slate-800 bg-slate-100 dark:text-slate-200 text-slate-700 hover:bg-[#c5a059]/10 hover:text-[#c5a059] dark:hover:bg-slate-850 dark:hover:text-[#d4af37] border dark:border-slate-700 border-slate-300 transition-all rounded-xl text-xs font-bold shadow-sm"
             >
               <Copy className="w-4 h-4" /> {copySuccess || 'Copy Prompt'}
             </button>
@@ -1137,6 +1231,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     </div>
   );
 
+  /* STREAMING_CHUNK: Formatting active quiz engine view... */
   const renderTakingQuiz = () => {
     if (!activeQuiz) return null;
     const currentQ = activeQuiz.questions[currentQuestionIndex];
@@ -1154,10 +1249,19 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
           <div className="flex flex-row justify-between items-center mb-6">
             <button 
               onClick={resetToDashboard} 
-              className="flex items-center gap-2 dark:text-slate-400 text-slate-600 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all duration-300 text-xs px-3.5 py-2 border dark:border-slate-850 border-slate-350 hover:border-indigo-500/50 dark:bg-slate-900 bg-white rounded-lg font-bold shadow-sm"
+              className="flex items-center gap-2 dark:text-slate-400 text-slate-600 hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-all duration-300 text-xs px-3.5 py-2 border dark:border-slate-850 border-slate-350 hover:border-[#c5a059]/50 dark:bg-slate-900 bg-white rounded-lg font-bold shadow-sm"
             >
               <LogOut className="w-4 h-4" /> Save & Exit
             </button>
+
+            {isAdmin && (
+              <button 
+                onClick={() => openEditQuestionModal(currentQuestionIndex)}
+                className="flex items-center gap-1.5 px-3 py-2 border border-[#c5a059]/40 bg-[#c5a059]/5 dark:text-[#d4af37] text-amber-800 hover:bg-[#c5a059]/10 rounded-lg text-xs font-bold transition-all"
+              >
+                <Edit3 className="w-3.5 h-3.5" /> Edit This Question
+              </button>
+            )}
             
             <button 
               onClick={() => {
@@ -1167,7 +1271,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   () => startQuiz(activeQuiz)
                 );
               }}
-              className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-500 dark:hover:text-rose-400 transition-colors duration-300 text-xs font-bold"
+              className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500 hover:text-[#c5a059] dark:hover:text-[#d4af37] transition-colors duration-300 text-xs font-bold"
             >
               <RotateCcw className="w-4 h-4" /> Restart Exam
             </button>
@@ -1177,15 +1281,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             <h2 className="text-xl md:text-2xl font-serif dark:text-slate-100 text-slate-800 font-bold truncate pr-4 leading-tight">
               {activeQuiz.quiz_title}
             </h2>
-            <div className="text-indigo-600 dark:text-indigo-400 font-bold tracking-wider uppercase whitespace-nowrap bg-indigo-500/10 px-3.5 py-1.5 rounded-lg text-xs border border-indigo-500/10">
+            <div className="text-amber-800 dark:text-[#d4af37] font-bold tracking-wider uppercase whitespace-nowrap bg-[#c5a059]/10 px-3.5 py-1.5 rounded-lg text-xs border border-[#c5a059]/25">
               Q{currentQuestionIndex + 1} OF {activeQuiz.questions.length}
             </div>
           </div>
 
           {/* Micro-animated dynamic progress bar */}
-          <div className="w-full h-2 dark:bg-slate-850 bg-slate-200 rounded-full overflow-hidden mb-8 shadow-inner flex">
+          <div className="w-full h-1.5 dark:bg-slate-850 bg-slate-200 rounded-full overflow-hidden mb-8 shadow-inner flex">
             <div 
-              className="h-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-500 cubic-bezier(0.4, 0, 0.2, 1)"
+              className="h-full bg-gradient-to-r from-[#9a7b3c] to-[#c5a059] transition-all duration-500 ease-out"
               style={{ width: `${progressPercent}%` }}
             ></div>
           </div>
@@ -1206,7 +1310,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               if (qUncertain) {
                 borderClass = "border-amber-500 dark:border-amber-500 shadow-amber-500/10 shadow-md";
               } else if (isCurrent) {
-                borderClass = "border-indigo-500 dark:border-indigo-400 shadow-indigo-500/10 shadow-md";
+                borderClass = "border-[#c5a059] dark:border-[#d4af37] shadow-[#c5a059]/10 shadow-md";
               } else if (!hasAnswered) {
                 borderClass = "border-slate-200/80 dark:border-slate-800/80 hover:border-slate-350 dark:hover:border-slate-700";
               } else if (isCorrect) {
@@ -1216,8 +1320,8 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               }
 
               if (isCurrent && !qUncertain) {
-                bgClass = "bg-indigo-500/10 dark:bg-indigo-900/30";
-                textClass = "text-indigo-600 dark:text-indigo-400 font-extrabold";
+                bgClass = "bg-[#c5a059]/15 dark:bg-[#d4af37]/10";
+                textClass = "text-[#c5a059] dark:text-[#d4af37] font-extrabold";
               } else if (!hasAnswered) {
                 bgClass = "bg-white dark:bg-slate-900";
                 textClass = "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-100";
@@ -1229,7 +1333,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                 textClass = "text-rose-600 dark:text-rose-400 font-bold";
               }
 
-              const activeIndicator = isCurrent ? " ring-2 ring-indigo-500/30 dark:ring-indigo-400/20 ring-offset-2 dark:ring-offset-slate-950" : "";
+              const activeIndicator = isCurrent ? " ring-1 ring-[#c5a059]/50 dark:ring-[#d4af37]/50" : "";
 
               return (
                 <button
@@ -1258,14 +1362,14 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                 let btnClass = "w-full text-left p-4 rounded-xl border transition-all duration-300 flex items-start gap-4 relative group ";
                 
                 if (!isAnswered) {
-                  btnClass += "border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-900 dark:text-slate-200 text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:border-indigo-400 dark:hover:border-indigo-600 cursor-pointer hover:shadow-md hover:-translate-y-0.5";
+                  btnClass += "border-slate-200 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-900 dark:text-slate-200 text-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:border-[#c5a059] dark:hover:border-[#d4af37] cursor-pointer hover:shadow-md";
                 } else {
                   if (isCorrectOption) {
-                    btnClass += "border-emerald-500 dark:border-emerald-600/80 bg-emerald-500/10 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300 shadow-md shadow-emerald-500/5"; 
+                    btnClass += "border-emerald-500 dark:border-emerald-600/80 bg-emerald-500/10 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300 shadow-md"; 
                   } else if (isSelected && !isCorrectOption) {
-                    btnClass += "border-rose-500 dark:border-rose-600/80 bg-rose-500/10 dark:bg-rose-950/30 text-rose-800 dark:text-rose-300 shadow-md shadow-rose-500/5"; 
+                    btnClass += "border-rose-500 dark:border-rose-600/80 bg-rose-500/10 dark:bg-rose-950/30 text-rose-800 dark:text-rose-300 shadow-md"; 
                   } else {
-                    btnClass += "border-slate-200 dark:border-slate-800/80 bg-slate-50/30 dark:bg-slate-950/30 text-slate-400 dark:text-slate-600 opacity-50"; 
+                    btnClass += "border-slate-200 dark:border-slate-800/80 bg-slate-50/30 dark:bg-slate-955/30 text-slate-450 dark:text-slate-600 opacity-50"; 
                   }
                 }
 
@@ -1298,7 +1402,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                     </button>
                     
                     {isAnswered && (
-                      <div className={`mt-3 p-4 text-sm rounded-xl border-l-4 ml-2 md:ml-4 animate-fade-in shadow-sm ${
+                      <div className={`mt-3 p-4 text-sm rounded-xl border-l-4 ml-2 md:ml-4 shadow-sm ${
                         isCorrectOption 
                           ? "bg-emerald-500/5 dark:bg-emerald-950/10 border-emerald-550 text-emerald-800 dark:text-emerald-200" 
                           : "bg-rose-500/5 dark:bg-rose-950/10 border-rose-550 text-rose-800 dark:text-rose-200"
@@ -1327,8 +1431,8 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   onClick={toggleUncertainty}
                   className={`flex items-center justify-center gap-2 px-5 py-2.5 border rounded-xl transition-all duration-300 text-xs font-bold w-full sm:w-auto ${
                     isUncertain
-                      ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-md shadow-amber-500/5'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:border-amber-500/60 hover:text-amber-600 dark:hover:border-amber-500/40 dark:hover:text-amber-400'
+                      ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400 shadow-md'
+                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:border-amber-500 hover:text-amber-600 dark:hover:border-amber-500 dark:hover:text-[#d4af37]'
                   }`}
                 >
                   <AlertTriangle className="w-4 h-4" />
@@ -1338,7 +1442,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
 
               <button 
                 onClick={currentQuestionIndex < activeQuiz.questions.length - 1 ? handleNextQuestion : finishQuiz}
-                className="w-full sm:w-auto flex justify-center items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all duration-300 shadow-md shadow-indigo-500/15 text-xs font-bold"
+                className="w-full sm:w-auto flex justify-center items-center gap-2 px-6 py-2.5 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all duration-300 shadow-md text-xs font-bold"
               >
                 {currentQuestionIndex < activeQuiz.questions.length - 1 ? 'Next Question' : 'Finish Assessment'} 
                 <ChevronRight className="w-4 h-4" />
@@ -1346,9 +1450,9 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             </div>
 
             {/* Visual hotkey controller panel (Desktop Only) */}
-            <div className="mt-8 flex flex-wrap justify-center items-center gap-y-2 gap-x-6 text-[10px] uppercase tracking-wider dark:text-slate-550 text-slate-400 pt-4 border-t border-dashed dark:border-slate-850/80 border-slate-250/80 hidden md:flex font-bold">
+            <div className="mt-8 flex flex-wrap justify-center items-center gap-y-2 gap-x-6 text-[10px] uppercase tracking-wider dark:text-slate-500 text-slate-400 pt-4 border-t border-dashed dark:border-slate-850 border-slate-250 hidden md:flex font-bold">
               <div className="flex items-center gap-1.5 font-sans">
-                <Keyboard className="w-4 h-4 text-indigo-500" />
+                <Keyboard className="w-4 h-4 text-[#c5a059] dark:text-[#d4af37]" />
                 <span>HOTKEYS ACTIVE:</span>
               </div>
               <div className="flex items-center gap-1.5 font-mono">
@@ -1371,6 +1475,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     );
   };
 
+  /* STREAMING_CHUNK: Formatting review analysis screen... */
   const renderReview = () => {
     const { incorrect, correctButUncertain } = computeReviewData();
     const totalQuestions = activeQuiz.questions.length;
@@ -1382,11 +1487,11 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
         <div>
           {/* Completion Metrics Score Card */}
           <div className="text-center mb-10 dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl p-8 shadow-lg relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-emerald-550 via-indigo-500 to-fuchsia-500"></div>
-            <Award className="w-16 h-16 mx-auto text-indigo-500 mb-4 animate-pulse" />
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-emerald-500 via-[#c5a059] to-amber-500"></div>
+            <Award className="w-16 h-16 mx-auto text-[#c5a059] dark:text-[#d4af37] mb-4" />
             <h2 className="text-3xl font-serif dark:text-white text-slate-900 mb-2 font-bold tracking-wide">Assessment Completed</h2>
             <div className="flex items-center justify-center gap-4 text-lg">
-              <span className="dark:text-slate-300 text-slate-600 font-serif">Score: <strong className="text-indigo-600 dark:text-indigo-400 font-bold">{score} / {totalQuestions}</strong></span>
+              <span className="dark:text-slate-300 text-slate-600 font-serif">Score: <strong className="text-[#c5a059] dark:text-[#d4af37] font-bold">{score} / {totalQuestions}</strong></span>
               <span className="dark:text-slate-700 text-slate-350">|</span>
               <span className={`font-black ${percentage >= 80 ? 'text-emerald-600 dark:text-emerald-400' : percentage >= 60 ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'}`}>
                 {percentage}%
@@ -1417,7 +1522,15 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                     <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-5 pl-2">
                       <h4 className="text-lg dark:text-slate-100 text-slate-800 font-serif leading-relaxed flex-grow font-bold">{q.question}</h4>
                       
-                      <div className="shrink-0 font-mono">
+                      <div className="flex items-center gap-2 shrink-0 font-mono">
+                        {isAdmin && (
+                          <button 
+                            onClick={() => openEditQuestionModal(item.index)}
+                            className="flex items-center gap-1 px-2.5 py-1 text-xs border border-[#c5a059]/40 bg-[#c5a059]/10 text-amber-800 dark:text-[#d4af37] rounded-md font-bold transition-all"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" /> Edit
+                          </button>
+                        )}
                         {item.isUncertain ? (
                           <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 shadow-sm">
                             <AlertTriangle className="w-3.5 h-3.5" /> Uncertain / Incorrect
@@ -1503,9 +1616,17 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                       const correctOpt = q.options.find(o => o.isCorrect);
 
                       return (
-                        <div key={idx} className="border-l-4 border-amber-500/80 pl-4 py-1">
-                          <div className="flex items-center gap-2 mb-2 text-[10px] font-bold dark:text-slate-550 text-slate-400 uppercase tracking-widest font-mono">
+                        <div key={idx} className="border-l-4 border-[#c5a059] pl-4 py-1">
+                          <div className="flex items-center justify-between gap-2 mb-2 text-[10px] font-bold dark:text-slate-500 text-slate-400 uppercase tracking-widest font-mono">
                             <span>Question {item.index + 1}</span>
+                            {isAdmin && (
+                              <button 
+                                onClick={() => openEditQuestionModal(item.index)}
+                                className="flex items-center gap-1 px-2.5 py-1 text-[10px] border border-[#c5a059]/40 bg-[#c5a059]/10 text-amber-800 dark:text-[#d4af37] rounded-md font-bold transition-all"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" /> Edit Question
+                              </button>
+                            )}
                           </div>
                           <h5 className="font-serif dark:text-slate-200 text-slate-800 text-md mb-2 font-bold">{q.question}</h5>
                           <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mb-2 font-mono uppercase tracking-wider">
@@ -1524,7 +1645,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
             )}
           </div>
 
-          <div className="mt-10 flex flex-col sm:flex-row justify-center items-center gap-4 pt-8 border-t dark:border-slate-850/60 border-slate-200/60">
+          <div className="mt-10 flex flex-col sm:flex-row justify-center items-center gap-4 pt-8 border-t dark:border-slate-850 border-slate-200/60">
             <button 
               onClick={resetToDashboard}
               className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 border border-slate-300 dark:border-slate-700 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all duration-300 font-bold text-sm shadow-sm"
@@ -1540,7 +1661,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                   () => startQuiz(activeQuiz)
                 );
               }}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all duration-300 font-bold text-sm shadow-md shadow-indigo-500/15"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all duration-300 font-bold text-sm shadow-md"
             >
               <RotateCcw className="w-5 h-5" /> Retake Assessment
             </button>
@@ -1551,55 +1672,28 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
     );
   };
 
+  /* STREAMING_CHUNK: Setting up main system shell container and royal overlays ... */
   return (
-    <div className={`min-h-screen transition-colors duration-300 font-sans selection:bg-indigo-200 dark:selection:bg-indigo-950/80 ${theme === 'dark' ? 'dark bg-slate-950 text-slate-50' : 'bg-slate-50/60 text-slate-900'}`}>
-      <style dangerouslySetInnerHTML={{__html: `
-        .animate-fade-in {
-          animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(6px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-          height: 6px;
-          width: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: transparent; 
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #cbd5e1; 
-          border-radius: 4px;
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #1e293b; 
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #94a3b8; 
-        }
-        .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #334155; 
-        }
-      `}} />
-
+    <div className={`min-h-screen transition-colors duration-300 font-sans selection:bg-[#c5a059]/30 dark:selection:bg-[#d4af37]/20 ${theme === 'dark' ? 'dark bg-[#0b0f19] text-slate-55' : 'bg-[#fdfbf7] text-slate-900'}`}>
+      
       {/* Header theme utilities controller */}
       <header className="w-full p-4 flex justify-end max-w-5xl mx-auto gap-2">
         <button 
           onClick={toggleTheme}
-          className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors border border-transparent dark:border-slate-800/80 text-slate-600 dark:text-slate-300 shadow-sm dark:bg-slate-900 bg-white"
+          className="p-2.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors border border-transparent dark:border-[#d4af37]/20 text-slate-600 dark:text-[#d4af37] shadow-sm dark:bg-slate-900 bg-white"
           title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
         >
-          {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
+          {theme === 'light' ? <Moon className="w-5 h-5 text-[#c5a059]" /> : <Sun className="w-5 h-5 text-[#d4af37]" />}
         </button>
       </header>
 
+      {/* STREAMING_CHUNK: Managing administrative settings overlay components ... */}
       {showAdminLoginModal && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-violet-500"></div>
+          <div className="dark:bg-slate-900 bg-white border dark:border-[#d4af37]/30 border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
-              <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-500">
+              <div className="p-2 rounded-lg bg-amber-500/10 text-[#c5a059]">
                 <Lock className="w-5 h-5" />
               </div>
               <h3 className="font-serif text-xl font-bold">Admin Portal Login</h3>
@@ -1609,13 +1703,13 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">Username</label>
                 <div className="relative">
-                  <User className="absolute left-3.5 top-3 w-4 h-4 text-slate-450" />
+                  <User className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
                   <input 
                     type="text" 
                     required
                     value={adminUsernameInput}
                     onChange={(e) => setAdminUsernameInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-sm font-medium"
+                    className="w-full pl-10 pr-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#c5a059] text-sm font-medium"
                     placeholder="Enter admin username"
                   />
                 </div>
@@ -1624,13 +1718,13 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">Password</label>
                 <div className="relative">
-                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-450" />
+                  <Lock className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
                   <input 
                     type="password" 
                     required
                     value={adminPasswordInput}
                     onChange={(e) => setAdminPasswordInput(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 text-sm font-medium"
+                    className="w-full pl-10 pr-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#c5a059] text-sm font-medium"
                     placeholder="••••••••••••"
                   />
                 </div>
@@ -1658,12 +1752,105 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
                 </button>
                 <button 
                   type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all shadow-md shadow-indigo-500/15 text-xs font-bold"
+                  className="px-5 py-2 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all shadow-md text-xs font-bold"
                 >
                   Authorize Admin
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* STREAMING_CHUNK: Managing admin question edit modal controller ... */}
+      {showEditQuestionModal && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="dark:bg-slate-900 bg-white border dark:border-[#d4af37]/30 border-slate-200 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
+            
+            <div className="flex items-center justify-between mb-4 pb-2 border-b dark:border-slate-800 border-slate-100">
+              <div className="flex items-center gap-2 text-[#c5a059] dark:text-[#d4af37]">
+                <Edit3 className="w-5 h-5" />
+                <h3 className="font-serif text-xl font-bold">Edit Question {editQuestionIndex + 1}</h3>
+              </div>
+              <button 
+                onClick={() => setShowEditQuestionModal(false)}
+                className="p-1 text-slate-400 hover:text-[#c5a059] rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 overflow-y-auto pr-2 custom-scrollbar flex-grow">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">
+                  Question Text
+                </label>
+                <textarea 
+                  value={editQuestionText}
+                  onChange={(e) => setEditQuestionText(e.target.value)}
+                  className="w-full px-4 py-2.5 border rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#c5a059] text-sm font-semibold h-20 resize-none"
+                />
+              </div>
+
+              <div className="space-y-4">
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 font-mono">
+                  Options and Explanations
+                </label>
+                {editQuestionOptions.map((opt, idx) => (
+                  <div key={opt.id} className="p-4 border dark:border-slate-800 border-slate-200 rounded-xl space-y-3 dark:bg-slate-950/40 bg-slate-50/50">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-[#c5a059] dark:text-[#d4af37]">
+                        Option {opt.id}
+                      </span>
+                      <label className="flex items-center gap-2 text-xs font-bold font-mono cursor-pointer">
+                        <input 
+                          type="radio" 
+                          name="correctOptionRadio"
+                          checked={opt.isCorrect}
+                          onChange={() => handleSelectCorrectOption(opt.id)}
+                          className="accent-[#c5a059] dark:accent-[#d4af37]"
+                        />
+                        <span className={opt.isCorrect ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}>
+                          Is Correct Answer
+                        </span>
+                      </label>
+                    </div>
+
+                    <input 
+                      type="text"
+                      value={opt.text}
+                      onChange={(e) => handleEditOptionText(idx, e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs border rounded-lg dark:bg-slate-900 dark:border-slate-700 focus:outline-none focus:border-[#c5a059]"
+                      placeholder="Option Text"
+                    />
+
+                    <textarea
+                      value={opt.explanation}
+                      onChange={(e) => handleEditOptionExplanation(idx, e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs border rounded-lg dark:bg-slate-900 dark:border-slate-700 focus:outline-none focus:border-[#c5a059] h-14 resize-none"
+                      placeholder="Why is this option correct or incorrect?"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 text-sm font-bold pt-4 mt-4 border-t dark:border-slate-800 border-slate-100">
+              <button 
+                type="button"
+                onClick={() => setShowEditQuestionModal(false)}
+                className="px-4 py-2 border dark:border-slate-700 border-slate-300 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSaveEditedQuestion}
+                className="px-5 py-2 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all shadow-md text-xs font-bold flex items-center gap-1"
+              >
+                <Save className="w-4 h-4" /> Save Question Updates
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1718,11 +1905,11 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
       )}
 
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="dark:bg-slate-900 bg-white border dark:border-slate-800 border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 to-violet-500"></div>
-            <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-4 animate-bounce">
-              <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-500">
+        <div className="fixed inset-0 bg-slate-955/65 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="dark:bg-slate-900 bg-white border dark:border-[#d4af37]/20 border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#9a7b3c] to-[#c5a059]"></div>
+            <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-4">
+              <div className="p-2 rounded-lg bg-amber-500/10 text-[#c5a059]">
                 <AlertCircle className="w-5 h-5" />
               </div>
               <h3 className="font-serif text-xl font-bold">{confirmModal.title}</h3>
@@ -1739,7 +1926,7 @@ Ensure there is a clear, concise explanation for EVERY option (both right and wr
               </button>
               <button 
                 onClick={confirmModal.action}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all shadow-md shadow-indigo-500/15 text-xs font-bold"
+                className="px-5 py-2 bg-[#c5a059] hover:bg-[#a98442] text-white rounded-xl transition-all shadow-md text-xs font-bold"
               >
                 Confirm
               </button>

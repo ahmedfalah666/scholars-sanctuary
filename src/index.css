@@ -1,2 +1,45 @@
+/* STREAMING_CHUNK: Setting up index and royal animations... */
 @import "tailwindcss";
 @variant dark (&:where(.dark, .dark *));
+
+@layer base {
+body {
+transition: background-color 0.5s ease, color 0.5s ease;
+}
+}
+
+/* STREAMING_CHUNK: Refining transitions to be whisper-quiet ... */
+.animate-fade-in {
+animation: pureFadeIn 0.4s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+}
+
+@keyframes pureFadeIn {
+from {
+opacity: 0;
+}
+to {
+opacity: 1;
+}
+}
+
+/* Custom scrollbars with royal gold highlights */
+.custom-scrollbar::-webkit-scrollbar {
+height: 6px;
+width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+background: #c5a059;
+border-radius: 8px;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+background: #d4af37;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+background: #a98442;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+background: #b8902d;
+}
