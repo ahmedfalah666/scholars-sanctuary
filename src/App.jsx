@@ -87,6 +87,11 @@ export default function App() {
   const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
   const supabaseRef = useRef(null);
 
+  // Anti-flooding state control variables
+  const [requestTimestamps, setRequestTimestamps] = useState([]);
+  const [isFloodingBlocked, setIsFloodingBlocked] = useState(false);
+  const [floodingCooldown, setFloodingCooldown] = useState(0);
+
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
     title: '',
@@ -102,6 +107,34 @@ export default function App() {
     }
     return { uid: savedUid };
   });
+
+  // Security timer countdown decrementer
+  useEffect(() => {
+    if (floodingCooldown <= 0) {
+      if (isFloodingBlocked) setIsFloodingBlocked(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setFloodingCooldown(prev => prev - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [floodingCooldown, isFloodingBlocked]);
+
+  // Anti-flooding query rate-limiter check (allows max 6 DB writes per 10 seconds)
+  const verifyRateLimit = () => {
+    const now = Date.now();
+    const tenSecondsAgo = now - 10000;
+    const activeRequests = requestTimestamps.filter(t => t > tenSecondsAgo);
+    
+    if (activeRequests.length >= 6) {
+      setIsFloodingBlocked(true);
+      setFloodingCooldown(15); // Lock down mutations for 15 seconds
+      return false;
+    }
+    
+    setRequestTimestamps([...activeRequests, now]);
+    return true;
+  };
 
   useEffect(() => {
     const loadSupabaseScript = () => {
@@ -279,6 +312,7 @@ The JSON must exactly follow this schema:
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
+    if (!verifyRateLimit()) return; // Flooding Guard Protection
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     
     const newGroupObj = {
@@ -313,6 +347,7 @@ The JSON must exactly follow this schema:
 
   const handleUpdateGroup = async () => {
     if (!editGroupName.trim() || !editingGroupId) return;
+    if (!verifyRateLimit()) return; // Flooding Guard Protection
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
 
     if (isSupabaseReady) {
@@ -337,6 +372,7 @@ The JSON must exactly follow this schema:
   };
 
   const handleDeleteGroup = async (gId) => {
+    if (!verifyRateLimit()) return; // Flooding Guard Protection
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
@@ -454,6 +490,7 @@ The JSON must exactly follow this schema:
 
   const handleSaveEditedQuestion = async () => {
     if (!editedQuestionData || editingQuestionIndex === null) return;
+    if (!verifyRateLimit()) return; // Flooding Guard Protection
 
     // Update activeQuiz in local state first
     const updatedQuestions = [...activeQuiz.questions];
@@ -492,6 +529,7 @@ The JSON must exactly follow this schema:
   };
 
   const deleteQuiz = async (id) => {
+    if (!verifyRateLimit()) return; // Flooding Guard Protection
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
@@ -528,6 +566,13 @@ The JSON must exactly follow this schema:
 
     const completeRecord = nextStates[quizId];
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+
+    // Throttle progress state writes strictly if spam-clicked
+    if (updatedProgress.userAnswers && !verifyRateLimit()) {
+      console.warn("Write request throttled to prevent database flooding.");
+      saveLocalFallback(null, null, nextStates);
+      return; 
+    }
 
     if (isSupabaseReady) {
       try {
@@ -729,6 +774,10 @@ The JSON must exactly follow this schema:
           <span className="text-[10px] uppercase tracking-widest text-slate-400 font-sans">Designed & Developed by</span>
           <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider text-sm transition-colors duration-300">
             Ahmed Falah Hasan
+          </span>
+          <span className="text-[9px] uppercase tracking-widest text-slate-400 font-sans mt-2">Inspiration by</span>
+          <span className="font-semibold text-[#C5A059] dark:text-[#D4AF37] tracking-wider text-xs transition-colors duration-300">
+            Rawan Husien
           </span>
         </div>
       </div>
@@ -1629,6 +1678,41 @@ The JSON must exactly follow this schema:
         {currentView === 'taking_quiz' && renderTakingQuiz()}
         {currentView === 'review' && renderReview()}
       </main>
+
+      {/* ========================================== */}
+      {/* SECURITY EXTREME FLOODING / DDOS OVERLAY */}
+      {/* ========================================== */}
+      {isFloodingBlocked && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xl flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white/90 dark:bg-slate-900/90 border-2 border-rose-500/50 rounded-2xl max-w-md w-full p-8 shadow-2xl text-center relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500"></div>
+            
+            <div className="w-16 h-16 bg-rose-500/10 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-6 border border-rose-500/20">
+              <ShieldAlert className="w-8 h-8" />
+            </div>
+
+            <h3 className="text-xl font-serif font-black dark:text-white text-slate-900 mb-2 tracking-wide uppercase">
+              Security Shield Active
+            </h3>
+            
+            <p className="text-xs text-rose-600 dark:text-rose-400 font-mono tracking-widest uppercase font-bold mb-4">
+              Anti-Flooding Protection Triggered
+            </p>
+
+            <p className="dark:text-slate-300 text-slate-600 text-sm leading-relaxed mb-6 font-medium">
+              We detected a rapid burst of action requests. To protect server database integrity from spamming attacks, mutations have been temporarily throttled.
+            </p>
+
+            <div className="inline-flex items-center justify-center px-6 py-2 bg-rose-500/10 border border-rose-500/25 rounded-xl font-mono text-rose-500 font-black text-lg shadow-inner">
+              Cooling Down: {floodingCooldown}s
+            </div>
+
+            <p className="text-[10px] text-slate-450 uppercase mt-6 font-bold tracking-wider font-sans">
+              Portal locks will release automatically.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ========================================== */}
       {/* ADMIN LIVE EDIT MODAL (SOPHISTICATED OVERLAY) */}
