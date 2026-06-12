@@ -35,17 +35,17 @@ import {
   Award,
   BookMarked,
   Save,
-  CheckCircle2
+  CheckCircle2,
+  Share2
 } from "lucide-react";
 
-// Pull credentials from Netlify environment variables
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ""; 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem('academicTheme');
-    return savedTheme ? savedTheme : 'dark'; // Defaulting to luxury dark
+    return savedTheme ? savedTheme : 'dark'; // Luxury dark default
   });
 
   const [quizzes, setQuizzes] = useState([]);
@@ -73,6 +73,11 @@ export default function App() {
   const [showEditQuestionModal, setShowEditQuestionModal] = useState(false);
   const [editingQuestionIndex, setEditingQuestionIndex] = useState(null);
   const [editedQuestionData, setEditedQuestionData] = useState(null);
+
+  // Move Quiz Modal State
+  const [showMoveQuizModal, setShowMoveQuizModal] = useState(false);
+  const [quizToMove, setQuizToMove] = useState(null);
+  const [targetGroupId, setTargetGroupId] = useState('root');
 
   const [currentView, setCurrentView] = useState('dashboard'); 
   const [activeQuiz, setActiveQuiz] = useState(null);
@@ -108,7 +113,6 @@ export default function App() {
     return { uid: savedUid };
   });
 
-  // Security timer countdown decrementer
   useEffect(() => {
     if (floodingCooldown <= 0) {
       if (isFloodingBlocked) setIsFloodingBlocked(false);
@@ -120,7 +124,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [floodingCooldown, isFloodingBlocked]);
 
-  // Anti-flooding query rate-limiter check (allows max 6 DB writes per 10 seconds)
   const verifyRateLimit = () => {
     const now = Date.now();
     const tenSecondsAgo = now - 10000;
@@ -128,7 +131,7 @@ export default function App() {
     
     if (activeRequests.length >= 6) {
       setIsFloodingBlocked(true);
-      setFloodingCooldown(15); // Lock down mutations for 15 seconds
+      setFloodingCooldown(15); // Lock mutations for 15 seconds
       return false;
     }
     
@@ -288,7 +291,7 @@ Your task is to generate a 20-question Multiple Choice Question (MCQ) practice e
 
 1. Strict Scope Constraint: Every single question you generate must be based ONLY on concepts explicitly explained in the uploaded Lecture Notes. If a topic appears in the PYQs but is NOT present in the Lecture Notes, you must completely ignore it.
 2. Format & Style Match: Analyze the provided PYQs to understand the exact formatting, phrasing style, number of options (e.g., A, B, C, D), and difficulty level.
-3. Mixing Past Questions: You can include or closely adapt actual questions from the PYQs, but again, ONLY if they align with the current Lecture Notes. 
+3. Mixing Past Questions: You can include or closely adapt actual questions from the PYQs, but ONLY if they align with the current Lecture Notes. 
 4. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
 
 The JSON must exactly follow this schema:
@@ -312,7 +315,7 @@ The JSON must exactly follow this schema:
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
-    if (!verifyRateLimit()) return; // Flooding Guard Protection
+    if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     
     const newGroupObj = {
@@ -347,7 +350,7 @@ The JSON must exactly follow this schema:
 
   const handleUpdateGroup = async () => {
     if (!editGroupName.trim() || !editingGroupId) return;
-    if (!verifyRateLimit()) return; // Flooding Guard Protection
+    if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
 
     if (isSupabaseReady) {
@@ -372,7 +375,7 @@ The JSON must exactly follow this schema:
   };
 
   const handleDeleteGroup = async (gId) => {
-    if (!verifyRateLimit()) return; // Flooding Guard Protection
+    if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
@@ -447,28 +450,57 @@ The JSON must exactly follow this schema:
       }
       
       const parsed = JSON.parse(cleanedInput);
-      
-      if (!parsed.quizTitle || !parsed.questions || !Array.isArray(parsed.questions)) {
-        throw new Error("Invalid structure. Please check database configuration matching the JSON format.");
-      }
-      
-      const newQuiz = {
-        quiz_title: parsed.quizTitle,
-        questions: parsed.questions,
-        group_id: currentGroupId
-      };
-
       const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
-      if (isSupabaseReady) {
-        const { data, error } = await supabaseRef.current
-          .from('quizzes')
-          .insert([newQuiz])
-          .select();
-        if (error) throw error;
-        setQuizzes([data[0], ...quizzes]);
+      const quizzesToInsert = [];
+
+      // Auto-detection logic for bulk import vs single quiz structure (image_85b257.png)
+      if (parsed.quizzes && typeof parsed.quizzes === 'object' && !Array.isArray(parsed.quizzes)) {
+        // Bulk import detection
+        for (const key of Object.keys(parsed.quizzes)) {
+          const item = parsed.quizzes[key];
+          if (!item.quizTitle || !item.questions || !Array.isArray(item.questions)) {
+            throw new Error(`Bulk item [${key}] is missing the proper 'quizTitle' or 'questions' array.`);
+          }
+          quizzesToInsert.push({
+            quiz_title: item.quizTitle,
+            questions: item.questions,
+            group_id: currentGroupId
+          });
+        }
+      } else if (parsed.quizTitle && parsed.questions && Array.isArray(parsed.questions)) {
+        // Single quiz import structure detection
+        quizzesToInsert.push({
+          quiz_title: parsed.quizTitle,
+          questions: parsed.questions,
+          group_id: currentGroupId
+        });
       } else {
-        const fallbackId = Date.now().toString();
-        const updatedQuizzes = [{ ...newQuiz, id: fallbackId }, ...quizzes];
+        throw new Error("Invalid payload. Provide a single quiz object, or a 'quizzes' dictionary matching the bulk import specification.");
+      }
+
+      if (quizzesToInsert.length === 0) {
+        throw new Error("No quizzes detected inside payload.");
+      }
+
+      if (!verifyRateLimit()) return;
+
+      const insertedQuizzes = [];
+      if (isSupabaseReady) {
+        for (const q of quizzesToInsert) {
+          const { data, error } = await supabaseRef.current
+            .from('quizzes')
+            .insert([q])
+            .select();
+          if (error) throw error;
+          if (data && data[0]) insertedQuizzes.push(data[0]);
+        }
+        setQuizzes([...insertedQuizzes, ...quizzes]);
+      } else {
+        const localItems = quizzesToInsert.map(q => ({
+          ...q,
+          id: 'local_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now()
+        }));
+        const updatedQuizzes = [...localItems, ...quizzes];
         setQuizzes(updatedQuizzes);
         saveLocalFallback(updatedQuizzes, null, null);
       }
@@ -476,8 +508,41 @@ The JSON must exactly follow this schema:
       setJsonInput('');
       setCurrentView('dashboard');
     } catch (err) {
-      setErrorMsg("Failed to parse JSON: " + err.message);
+      setErrorMsg("Import rejected: " + err.message);
     }
+  };
+
+  const handleOpenMoveModal = (quiz, e) => {
+    e.stopPropagation();
+    setQuizToMove(quiz);
+    setTargetGroupId(quiz.group_id === null ? 'root' : quiz.group_id);
+    setShowMoveQuizModal(true);
+  };
+
+  const handleMoveQuiz = async () => {
+    if (!quizToMove) return;
+    if (!verifyRateLimit()) return;
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    const destinationGroupId = targetGroupId === 'root' ? null : targetGroupId;
+
+    if (isSupabaseReady) {
+      try {
+        const { error } = await supabaseRef.current
+          .from('quizzes')
+          .update({ group_id: destinationGroupId })
+          .eq('id', quizToMove.id);
+        if (error) throw error;
+        setQuizzes(quizzes.map(q => q.id === quizToMove.id ? { ...q, group_id: destinationGroupId } : q));
+      } catch (err) {
+        console.error("Cloud movement failed:", err);
+      }
+    } else {
+      const updated = quizzes.map(q => q.id === quizToMove.id ? { ...q, group_id: destinationGroupId } : q);
+      setQuizzes(updated);
+      saveLocalFallback(updated, null, null);
+    }
+    setShowMoveQuizModal(false);
+    setQuizToMove(null);
   };
 
   const openEditQuestionPanel = (qIdx) => {
@@ -490,7 +555,7 @@ The JSON must exactly follow this schema:
 
   const handleSaveEditedQuestion = async () => {
     if (!editedQuestionData || editingQuestionIndex === null) return;
-    if (!verifyRateLimit()) return; // Flooding Guard Protection
+    if (!verifyRateLimit()) return;
 
     // Update activeQuiz in local state first
     const updatedQuestions = [...activeQuiz.questions];
@@ -529,7 +594,7 @@ The JSON must exactly follow this schema:
   };
 
   const deleteQuiz = async (id) => {
-    if (!verifyRateLimit()) return; // Flooding Guard Protection
+    if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
@@ -799,6 +864,22 @@ The JSON must exactly follow this schema:
     return trail;
   };
 
+  // Helper to build recursive breadcrumb strings for target relocation selections
+  const getFullBreadcrumbString = (targetId) => {
+    const trail = [];
+    let parent = targetId;
+    while (parent) {
+      const pGrp = groups.find(g => g.id === parent);
+      if (pGrp) {
+        trail.unshift(pGrp.name);
+        parent = pGrp.parent_id;
+      } else {
+        break;
+      }
+    }
+    return trail.length > 0 ? trail.join(" > ") : "Home Dashboard";
+  };
+
   const currentLevelGroups = groups.filter(g => g.parent_id === currentGroupId);
   const currentLevelQuizzes = quizzes.filter(q => q.group_id === currentGroupId);
 
@@ -863,7 +944,6 @@ The JSON must exactly follow this schema:
               <h2 className="text-2xl md:text-3xl font-serif font-bold text-white mb-3 tracking-wide">
                 Welcome to Your Personal Exam Suite
               </h2>
-              {/* FIXED CONTRAST: Description text is now pale gold-grey for extreme visibility */}
               <p className="text-slate-300 dark:text-[#EAE3D2] text-sm leading-relaxed mb-6 font-medium">
                 A high-precision testing environment configured for academic excellence. Upload past questions or notes, generate quizzes, and monitor your concept confidence.
               </p>
@@ -1026,8 +1106,16 @@ The JSON must exactly follow this schema:
                       
                       <div className="pl-2">
                         {isAdmin && (
-                          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                            <button onClick={() => {
+                          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
+                            <button 
+                              onClick={(e) => handleOpenMoveModal(quiz, e)}
+                              className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-[#D4AF37] hover:bg-[#C5A059]/10 transition-all"
+                              title="Move quiz folder location"
+                            >
+                              <Share2 className="w-4 h-4" />
+                            </button>
+                            <button onClick={(e) => {
+                              e.stopPropagation();
                               showConfirm(
                                 "Delete Assessment",
                                 `Are you sure you want to permanently delete "${quiz.quiz_title}"?`,
@@ -1039,7 +1127,7 @@ The JSON must exactly follow this schema:
                           </div>
                         )}
                         
-                        <h3 className="text-xl font-serif dark:text-slate-100 text-slate-800 mb-2 pr-8 leading-snug font-bold group-hover:text-[#D4AF37] transition-colors">
+                        <h3 className="text-xl font-serif dark:text-slate-100 text-slate-800 mb-2 pr-12 leading-snug font-bold group-hover:text-[#D4AF37] transition-colors">
                           {quiz.quiz_title}
                         </h3>
                         
@@ -1139,31 +1227,54 @@ The JSON must exactly follow this schema:
           <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-3 flex items-center gap-3 font-bold">
             <FileText className="w-6 h-6 text-[#C5A059]" /> Import Academic Assessment
           </h2>
-          <p className="dark:text-slate-400 text-slate-600 mb-6 text-sm">
-            Paste the JSON generated by your AI tool. It will be cataloged under the current folder pathway.
+          <p className="dark:text-slate-400 text-slate-600 mb-4 text-sm leading-relaxed">
+            Paste your raw JSON. The engine **automatically detects** both single and **bulk lecture import structures** (matching <span className="font-mono text-[#D4AF37] font-bold">image_85b257.png</span> specs).
           </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-xs bg-[#C5A059]/5 border border-[#C5A059]/20 p-4 rounded-xl font-mono text-slate-600 dark:text-slate-300">
+            <div>
+              <span className="font-bold text-[#D4AF37]">Single Quiz Syntax:</span>
+              <pre className="mt-1 opacity-80 text-[10px]">
+{`{
+  "quizTitle": "Lecture Title",
+  "questions": [...]
+}`}
+              </pre>
+            </div>
+            <div>
+              <span className="font-bold text-[#D4AF37]">Bulk Quizzes Syntax:</span>
+              <pre className="mt-1 opacity-80 text-[10px]">
+{`{
+  "quizzes": {
+    "Lecture 1": { "quizTitle": "...", "questions": [...] },
+    "Lecture 2": { "quizTitle": "...", "questions": [...] }
+  }
+}`}
+              </pre>
+            </div>
+          </div>
           
           <textarea
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
-            className="w-full h-96 bg-white/20 dark:bg-slate-950/40 border border-[#C5A059]/30 rounded-xl p-4 dark:text-slate-300 text-slate-800 font-mono text-xs focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all resize-none shadow-inner"
-            placeholder='{"quizTitle": "...", "questions": [...]}'
+            className="w-full h-80 bg-white/20 dark:bg-slate-950/40 border border-[#C5A059]/30 rounded-xl p-4 dark:text-slate-300 text-slate-800 font-mono text-xs focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all resize-none shadow-inner"
+            placeholder='Paste your JSON payload...'
           />
           
           {errorMsg && (
-            <div className="mt-4 p-4 bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400 rounded-xl flex items-start gap-3">
+            <div className="mt-4 p-4 bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400 rounded-xl flex items-start gap-3 animate-fade-in">
               <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
               <p className="text-sm font-semibold">{errorMsg}</p>
             </div>
           )}
 
-          <div className="mt-8 flex justify-end">
+          <div className="mt-6 flex justify-end">
             <button 
               onClick={handleAddQuiz}
               disabled={!jsonInput.trim()}
               className="w-full sm:w-auto px-8 py-3 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all duration-300 font-bold shadow-md shadow-[#D4AF37]/15"
             >
-              Upload Quiz to Database
+              Compile & Inject Quizzes
             </button>
           </div>
         </div>
@@ -1262,7 +1373,7 @@ The JSON must exactly follow this schema:
           </div>
 
           {/* Micro-animated dynamic progress bar */}
-          <div className="w-full h-2 bg-slate-200 dark:bg-slate-850 rounded-full overflow-hidden mb-8 shadow-inner flex">
+          <div className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden mb-8 shadow-inner flex">
             <div 
               className="h-full bg-gradient-to-r from-[#C5A059] to-[#D4AF37] transition-all duration-300"
               style={{ width: `${progressPercent}%` }}
@@ -1329,6 +1440,7 @@ The JSON must exactly follow this schema:
               {currentQ.question}
             </h3>
 
+            {/* Resolving low-contrast styling issues dynamically from image_870832.png */}
             <div className="space-y-4">
               {currentQ.options.map((option, idx) => {
                 const isSelected = selectedOptId === option.id;
@@ -1340,12 +1452,12 @@ The JSON must exactly follow this schema:
                   btnClass += "border-[#C5A059]/20 bg-white/20 dark:bg-slate-900/20 text-slate-750 dark:text-slate-200 hover:bg-[#C5A059]/10 hover:border-[#D4AF37] cursor-pointer hover:shadow-md";
                 } else {
                   if (isCorrectOption) {
-                    btnClass += "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-350 shadow-md"; 
+                    btnClass += "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 shadow-md"; 
                   } else if (isSelected && !isCorrectOption) {
-                    btnClass += "border-rose-500 bg-rose-500/10 text-rose-800 dark:text-rose-350 shadow-md"; 
+                    btnClass += "border-rose-500 bg-rose-500/10 text-rose-800 dark:text-rose-300 shadow-md"; 
                   } else {
-                    /* FIXED DISCOLORATION: Soft but beautifully readable golden-grey tone, retaining 75% opacity for clear visibility */
-                    btnClass += "border-[#C5A059]/15 bg-white/5 dark:bg-slate-950/20 text-slate-500 dark:text-slate-400 opacity-75 backdrop-blur-sm cursor-not-allowed"; 
+                    // RESOLVING image_870832.png: Translucent backdrop but keeping options fully readable (slate color weight)
+                    btnClass += "border-[#C5A059]/15 bg-white/5 dark:bg-slate-950/20 text-slate-700 dark:text-slate-350 opacity-90 backdrop-blur-sm cursor-not-allowed"; 
                   }
                 }
 
@@ -1833,6 +1945,62 @@ The JSON must exactly follow this schema:
       )}
 
       {/* ========================================== */}
+      {/* ADMIN QUIZ MOVE LOCATION MODAL */}
+      {/* ========================================== */}
+      {showMoveQuizModal && quizToMove && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
+            <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
+              <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
+                <Share2 className="w-5 h-5" />
+              </div>
+              <h3 className="font-serif text-xl font-bold">Relocate Assessment</h3>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs text-slate-400 mb-2 font-medium">
+                  Select the target folder pathway where you would like to move <span className="font-bold text-[#D4AF37]">"{quizToMove.quiz_title}"</span>:
+                </p>
+                <select 
+                  value={targetGroupId}
+                  onChange={(e) => setTargetGroupId(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 dark:border-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] text-sm font-semibold"
+                >
+                  <option value="root">Home Dashboard (Main Level)</option>
+                  {groups.map(g => (
+                    <option key={g.id} value={g.id}>
+                      {getFullBreadcrumbString(g.id)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3 text-sm font-bold pt-4 border-t border-slate-200 dark:border-slate-800">
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowMoveQuizModal(false);
+                    setQuizToMove(null);
+                  }}
+                  className="px-4 py-2 border border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleMoveQuiz}
+                  className="px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all shadow-md shadow-[#D4AF37]/15 text-xs font-bold"
+                >
+                  Move Quiz
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
       {/* ADMIN LOGIN MODAL */}
       {/* ========================================== */}
       {showAdminLoginModal && (
@@ -1925,7 +2093,7 @@ The JSON must exactly follow this schema:
             
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono font-sans">
+                <label className="block text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 mb-1.5 font-mono">
                   Group Folder Name
                 </label>
                 <input 
