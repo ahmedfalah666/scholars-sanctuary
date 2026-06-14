@@ -1807,6 +1807,8 @@ The JSON must exactly follow this schema:
         {renderSignatureFooter()}
       </div>
     );
+  };
+
   const renderReports = () => {
     return (
       <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
