@@ -163,8 +163,20 @@ export default function App() {
     const initializeClient = () => {
       try {
         if (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY) {
-          supabaseRef.current = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+          const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+          supabaseRef.current = client;
           setIsSupabaseLoaded(true);
+
+          // Track Auth State for Admin status
+          client.auth.onAuthStateChange((event, session) => {
+            if (session?.user?.email === 'ahmedfalahoffical@gmail.com') {
+              setIsAdmin(true);
+              localStorage.setItem('isSanctuaryAdmin', 'true');
+            } else {
+              setIsAdmin(false);
+              localStorage.setItem('isSanctuaryAdmin', 'false');
+            }
+          });
         }
       } catch (e) {
         console.warn("Supabase integration failed. Falling back to local state.", e);
@@ -419,21 +431,32 @@ The JSON must exactly follow this schema:
     }
   };
 
-  const handleAdminLogin = (e) => {
+  const handleAdminLogin = async (e) => {
     e.preventDefault();
-    if (adminUsernameInput === 'admin' && adminPasswordInput === 'ScholarAdmin2026!') {
-      setIsAdmin(false);
-      localStorage.setItem('isSanctuaryAdmin', 'true');
+    if (!supabaseRef.current) {
+      setLoginError("Authentication server not ready.");
+      return;
+    }
+
+    const { error } = await supabaseRef.current.auth.signInWithPassword({
+      email: adminUsernameInput,
+      password: adminPasswordInput,
+    });
+
+    if (error) {
+      setLoginError(error.message);
+    } else {
       setShowAdminLoginModal(false);
       setAdminUsernameInput('');
       setAdminPasswordInput('');
       setLoginError('');
-    } else {
-      setLoginError('Access denied. Incorrect credentials.');
     }
   };
 
-  const handleAdminLogout = () => {
+  const handleAdminLogout = async () => {
+    if (supabaseRef.current) {
+      await supabaseRef.current.auth.signOut();
+    }
     setIsAdmin(false);
     localStorage.setItem('isSanctuaryAdmin', 'false');
     setCurrentView('dashboard');
