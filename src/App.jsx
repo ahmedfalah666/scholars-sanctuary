@@ -36,7 +36,10 @@ import {
   BookMarked,
   Save,
   CheckCircle2,
-  Share2
+  Share2,
+  Flag,
+  Inbox,
+  Send
 } from "lucide-react";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ""; 
@@ -103,6 +106,14 @@ export default function App() {
     message: '',
     action: null
   });
+
+  const [inboxMessages, setInboxMessages] = useState([]);
+  const [showInboxModal, setShowInboxModal] = useState(false);
+  const [newInboxMessage, setNewInboxMessage] = useState('');
+
+  const [reports, setReports] = useState([]);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState('');
 
   const [currentUser, setCurrentUser] = useState(() => {
     let savedUid = localStorage.getItem('sanctuaryUserId');
@@ -209,6 +220,12 @@ export default function App() {
         if (quizErr) throw quizErr;
         setQuizzes(fetchedQuizzes || []);
 
+        const { data: fetchedMsgs } = await supabaseRef.current.from('inbox_messages').select('*').order('created_at', { ascending: false });
+        if (fetchedMsgs) setInboxMessages(fetchedMsgs);
+
+        const { data: fetchedReports } = await supabaseRef.current.from('reported_questions').select('*').order('created_at', { ascending: false });
+        if (fetchedReports) setReports(fetchedReports);
+
         const { data: progress, error: progErr } = await supabaseRef.current
           .from('user_progress')
           .select('*')
@@ -239,10 +256,14 @@ export default function App() {
     const localQuizzes = localStorage.getItem('sanctuaryQuizzes');
     const localGroups = localStorage.getItem('sanctuaryGroups');
     const localStates = localStorage.getItem('sanctuaryQuizStates');
+    const localMsgs = localStorage.getItem('sanctuaryInbox');
+    const localReports = localStorage.getItem('sanctuaryReports');
 
     if (localQuizzes) setQuizzes(JSON.parse(localQuizzes));
     if (localGroups) setGroups(JSON.parse(localGroups));
     if (localStates) setQuizStates(JSON.parse(localStates));
+    if (localMsgs) setInboxMessages(JSON.parse(localMsgs));
+    if (localReports) setReports(JSON.parse(localReports));
   };
 
   const saveLocalFallback = (updatedQuizzes, updatedGroups, updatedStates) => {
@@ -933,6 +954,12 @@ The JSON must exactly follow this schema:
             {isAdmin ? (
               <div className="flex flex-wrap gap-2 items-center">
                 <button 
+                  onClick={() => setCurrentView('reports')}
+                  className="flex items-center gap-2 px-4 py-2 border border-rose-500/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-all duration-300 rounded-lg text-sm font-semibold"
+                >
+                  <Flag className="w-4 h-4" /> Reports ({reports.filter(r => r.status === 'open').length})
+                </button>
+                <button 
                   onClick={() => setCurrentView('prompt')}
                   className="flex items-center gap-2 px-4 py-2 border border-[#C5A059]/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md dark:text-[#D4AF37] text-slate-700 hover:bg-[#C5A059]/10 transition-all duration-300 rounded-lg text-sm font-semibold"
                 >
@@ -1466,9 +1493,18 @@ The JSON must exactly follow this schema:
 
           {/* Interactive Card containing questions and options */}
           <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-10 shadow-lg relative overflow-hidden backdrop-blur-md">
-            <h3 className="text-xl md:text-2xl dark:text-slate-100 text-slate-800 font-serif leading-relaxed mb-8 font-bold">
-              {currentQ.question}
-            </h3>
+            <div className="flex justify-between items-start gap-4 mb-8">
+              <h3 className="text-xl md:text-2xl dark:text-slate-100 text-slate-800 font-serif leading-relaxed font-bold">
+                {currentQ.question}
+              </h3>
+              <button
+                onClick={() => setShowReportModal(true)}
+                className="shrink-0 p-2.5 rounded-xl text-rose-500 bg-rose-500/5 hover:bg-rose-500/15 border border-rose-500/20 hover:border-rose-500/40 transition-all duration-300 shadow-sm"
+                title="Report Question"
+              >
+                <Flag className="w-5 h-5" />
+              </button>
+            </div>
 
             {/* Resolving low-contrast styling issues dynamically from image_870832.png */}
             <div className="space-y-4">
@@ -1771,6 +1807,117 @@ The JSON must exactly follow this schema:
         {renderSignatureFooter()}
       </div>
     );
+  const renderReports = () => {
+    return (
+      <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
+        <div>
+          <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
+            <ChevronLeft className="w-4 h-4" /> Back to Dashboard
+          </button>
+
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-rose-500/30 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-500 to-rose-400"></div>
+            <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-6 flex items-center gap-3 font-bold">
+              <Flag className="w-6 h-6 text-rose-500" /> User Reports
+            </h2>
+            
+            {reports.length === 0 ? (
+              <div className="text-center py-10 bg-rose-500/5 rounded-xl border border-rose-500/10">
+                <p className="text-slate-500 dark:text-slate-400 font-semibold">No reports found.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {reports.map(r => (
+                  <div key={r.id} className={`p-5 rounded-xl border ${r.status === 'open' ? 'border-rose-500/30 bg-rose-500/5' : 'border-emerald-500/30 bg-emerald-500/5 opacity-70'} flex flex-col md:flex-row gap-4 justify-between items-start`}>
+                    <div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded ${r.status === 'open' ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400' : 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'}`}>
+                          {r.status}
+                        </span>
+                        <span className="text-xs text-slate-500 font-mono">{new Date(r.created_at).toLocaleString()}</span>
+                      </div>
+                      <h4 className="font-bold text-slate-800 dark:text-slate-200 text-sm mb-1">Quiz: {r.quiz_title} (Q{r.question_index + 1})</h4>
+                      <p className="text-sm text-slate-600 dark:text-slate-400 mb-2 italic">"{r.question_text}"</p>
+                      <div className="text-sm font-medium bg-white/50 dark:bg-slate-950/50 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
+                        <span className="text-rose-500 font-bold mr-2">Reason:</span>
+                        {r.reason}
+                      </div>
+                    </div>
+                    {r.status === 'open' && (
+                      <button 
+                        onClick={async () => {
+                          const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+                          if (isSupabaseReady) {
+                            await supabaseRef.current.from('reported_questions').update({ status: 'resolved' }).eq('id', r.id);
+                          }
+                          setReports(reports.map(rep => rep.id === r.id ? { ...rep, status: 'resolved' } : rep));
+                        }}
+                        className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 rounded-lg text-xs font-bold transition-all"
+                      >
+                        <CheckCircle2 className="w-4 h-4" /> Mark Resolved
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        {renderSignatureFooter()}
+      </div>
+    );
+  };
+
+  const handleSendInboxMessage = async () => {
+    if (!newInboxMessage.trim() || !isAdmin) return;
+    const msgObj = {
+      message: newInboxMessage,
+      created_at: new Date().toISOString()
+    };
+
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    if (isSupabaseReady) {
+      try {
+        const { data, error } = await supabaseRef.current.from('inbox_messages').insert([msgObj]).select();
+        if (!error && data) setInboxMessages([data[0], ...inboxMessages]);
+      } catch(e) { console.error(e); }
+    } else {
+      const localMsg = { ...msgObj, id: Date.now().toString() };
+      const updated = [localMsg, ...inboxMessages];
+      setInboxMessages(updated);
+      localStorage.setItem('sanctuaryInbox', JSON.stringify(updated));
+    }
+    setNewInboxMessage('');
+  };
+
+  const handleSubmitReport = async () => {
+    if (!reportReason.trim()) return;
+    const reportObj = {
+      quiz_id: activeQuiz.id,
+      quiz_title: activeQuiz.quiz_title,
+      question_index: currentQuestionIndex,
+      question_text: activeQuiz.questions[currentQuestionIndex].question,
+      reason: reportReason,
+      status: 'open',
+      created_at: new Date().toISOString()
+    };
+    
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    if (isSupabaseReady) {
+      try {
+        const { data, error } = await supabaseRef.current.from('reported_questions').insert([reportObj]).select();
+        if (!error && data) setReports([data[0], ...reports]);
+      } catch(e) { console.error(e); }
+    } else {
+      const localRep = { ...reportObj, id: Date.now().toString() };
+      const updated = [localRep, ...reports];
+      setReports(updated);
+      localStorage.setItem('sanctuaryReports', JSON.stringify(updated));
+    }
+    setShowReportModal(false);
+    setReportReason('');
+    
+    showConfirm("Report Submitted", "Thank you! Your report has been sent to the administrators.", () => {});
   };
 
   return (
@@ -1803,7 +1950,20 @@ The JSON must exactly follow this schema:
       <div className="absolute top-10 left-1/4 w-[500px] h-[500px] bg-[#C5A059]/5 rounded-full blur-3xl pointer-events-none"></div>
       <div className="absolute bottom-20 right-1/4 w-[400px] h-[400px] bg-[#D4AF37]/5 rounded-full blur-3xl pointer-events-none"></div>
 
-      <header className="w-full p-4 flex justify-end max-w-5xl mx-auto gap-2 relative z-10">
+      <header className="w-full p-4 flex justify-end items-center max-w-5xl mx-auto gap-3 relative z-10">
+        <button 
+          onClick={() => setShowInboxModal(true)}
+          className="relative p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm"
+          title="Updates Inbox"
+        >
+          <Inbox className="w-5 h-5" />
+          {inboxMessages.length > 0 && (
+            <span className="absolute top-0 right-0 flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+            </span>
+          )}
+        </button>
         <button 
           onClick={toggleTheme}
           className="p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm"
@@ -1819,6 +1979,7 @@ The JSON must exactly follow this schema:
         {currentView === 'prompt' && renderPrompt()}
         {currentView === 'taking_quiz' && renderTakingQuiz()}
         {currentView === 'review' && renderReview()}
+        {currentView === 'reports' && renderReports()}
       </main>
 
       {/* ========================================== */}
@@ -2182,12 +2343,129 @@ The JSON must exactly follow this schema:
               >
                 Cancel
               </button>
+              {confirmModal.action && (
+                <button 
+                  onClick={confirmModal.action}
+                  className="px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all shadow-md shadow-[#D4AF37]/15 text-xs font-bold"
+                >
+                  Confirm
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* GLOBAL INBOX MODAL */}
+      {/* ========================================== */}
+      {showInboxModal && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-[#0d1321] border border-[#C5A059]/30 rounded-2xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
+            <div className="flex items-center justify-between p-6 border-b border-[#C5A059]/20">
+              <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800">
+                <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
+                  <Inbox className="w-5 h-5" />
+                </div>
+                <h3 className="font-serif text-xl font-bold">Global Updates</h3>
+              </div>
               <button 
-                onClick={confirmModal.action}
-                className="px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all shadow-md shadow-[#D4AF37]/15 text-xs font-bold"
+                onClick={() => setShowInboxModal(false)}
+                className="text-slate-400 hover:text-slate-200"
               >
-                Confirm
+                <X className="w-6 h-6" />
               </button>
+            </div>
+            
+            <div className="flex-grow overflow-y-auto p-6 space-y-4 custom-scrollbar">
+              {inboxMessages.length === 0 ? (
+                <div className="text-center py-10 opacity-70">
+                  <Inbox className="w-12 h-12 mx-auto text-slate-400 mb-3" />
+                  <p className="text-slate-500 font-medium">No updates available at the moment.</p>
+                </div>
+              ) : (
+                inboxMessages.map(msg => (
+                  <div key={msg.id} className="bg-[#C5A059]/5 border border-[#C5A059]/20 p-4 rounded-xl shadow-sm">
+                    <p className="text-xs text-[#D4AF37] font-mono font-bold mb-2 uppercase tracking-wider">
+                      {new Date(msg.created_at).toLocaleString()}
+                    </p>
+                    <p className="text-sm dark:text-slate-200 text-slate-800 leading-relaxed font-medium">
+                      {msg.message}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {isAdmin && (
+              <div className="p-4 border-t border-[#C5A059]/20 bg-slate-50/50 dark:bg-slate-900/50">
+                <div className="flex gap-2">
+                  <input 
+                    type="text"
+                    value={newInboxMessage}
+                    onChange={(e) => setNewInboxMessage(e.target.value)}
+                    placeholder="Broadcast an update to all users..."
+                    className="flex-grow px-4 py-2 border border-[#C5A059]/30 rounded-xl bg-white dark:bg-slate-950 focus:outline-none focus:border-[#D4AF37] text-sm"
+                  />
+                  <button 
+                    onClick={handleSendInboxMessage}
+                    disabled={!newInboxMessage.trim()}
+                    className="px-4 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl font-bold transition-all disabled:opacity-50 flex items-center justify-center shrink-0"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* REPORT QUESTION MODAL */}
+      {/* ========================================== */}
+      {showReportModal && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-[#0d1321] border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-500 to-rose-400"></div>
+            <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
+              <div className="p-2 rounded-lg bg-rose-500/10 text-rose-500">
+                <Flag className="w-5 h-5" />
+              </div>
+              <h3 className="font-serif text-xl font-bold">Report Question</h3>
+            </div>
+            
+            <div className="space-y-4">
+              <p className="text-sm dark:text-slate-300 text-slate-700 leading-relaxed font-medium">
+                Found a conceptual error, typo, or unclear wording? Describe the issue below so an admin can fix it.
+              </p>
+              
+              <textarea
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                placeholder="What seems to be wrong with this question?"
+                className="w-full px-4 py-3 border border-rose-500/30 rounded-xl bg-white/50 dark:bg-slate-950/50 focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 text-sm font-medium h-32 resize-none"
+              ></textarea>
+
+              <div className="flex justify-end gap-3 text-sm font-bold pt-4 border-t border-slate-200 dark:border-slate-800">
+                <button 
+                  onClick={() => {
+                    setShowReportModal(false);
+                    setReportReason('');
+                  }}
+                  className="px-4 py-2 border border-slate-300 dark:border-slate-700 dark:text-slate-300 text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSubmitReport}
+                  disabled={!reportReason.trim()}
+                  className="px-5 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl transition-all shadow-md disabled:opacity-50 text-xs font-bold"
+                >
+                  Submit Report
+                </button>
+              </div>
             </div>
           </div>
         </div>
