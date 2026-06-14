@@ -438,12 +438,14 @@ The JSON must exactly follow this schema:
       return;
     }
 
+    const email = adminUsernameInput.trim();
     const { error } = await supabaseRef.current.auth.signInWithPassword({
-      email: adminUsernameInput,
+      email: email,
       password: adminPasswordInput,
     });
 
     if (error) {
+      console.error("Supabase Auth Error:", error.message, error.status);
       setLoginError(error.message);
     } else {
       setShowAdminLoginModal(false);
