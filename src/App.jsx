@@ -110,6 +110,10 @@ export default function App() {
   const [inboxMessages, setInboxMessages] = useState([]);
   const [showInboxModal, setShowInboxModal] = useState(false);
   const [newInboxMessage, setNewInboxMessage] = useState('');
+  const [lastInboxView, setLastInboxView] = useState(() => localStorage.getItem('sanctuaryLastInboxView') || null);
+
+  const hasUnreadInbox = inboxMessages.length > 0 && 
+    (!lastInboxView || new Date(inboxMessages[0].created_at) > new Date(lastInboxView));
 
   const [reports, setReports] = useState([]);
   const [showReportModal, setShowReportModal] = useState(false);
@@ -1954,12 +1958,17 @@ The JSON must exactly follow this schema:
 
       <header className="w-full p-4 flex justify-end items-center max-w-5xl mx-auto gap-3 relative z-10">
         <button 
-          onClick={() => setShowInboxModal(true)}
+          onClick={() => {
+            setShowInboxModal(true);
+            const now = new Date().toISOString();
+            setLastInboxView(now);
+            localStorage.setItem('sanctuaryLastInboxView', now);
+          }}
           className="relative p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm"
           title="Updates Inbox"
         >
           <Inbox className="w-5 h-5" />
-          {inboxMessages.length > 0 && (
+          {hasUnreadInbox && (
             <span className="absolute top-0 right-0 flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
