@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+/* eslint-disable react-hooks/refs */
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   BookOpen, 
   ChevronRight,
@@ -39,7 +40,14 @@ import {
   Share2,
   Flag,
   Inbox,
-  Send
+  Send,
+  BarChart2,
+  Image as ImageIcon,
+  PlusCircle,
+  MinusCircle,
+  Users,
+  Activity,
+  Upload
 } from "lucide-react";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ""; 
@@ -72,10 +80,14 @@ export default function App() {
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editGroupName, setEditGroupName] = useState('');
 
-  // Edit Question Modal State
-  const [showEditQuestionModal, setShowEditQuestionModal] = useState(false);
-  const [editingQuestionIndex, setEditingQuestionIndex] = useState(null);
-  const [editedQuestionData, setEditedQuestionData] = useState(null);
+  // Full Quiz Editor State
+  const [editedQuizData, setEditedQuizData] = useState(null);
+
+  // Analytics State
+  const [analyticsData, setAnalyticsData] = useState({ visits: 0, totalUsers: 0, totalQuizzesTaken: 0, completedQuizzes: 0 });
+
+  // Prompt View State
+  const [promptTab, setPromptTab] = useState('new'); // 'new' or 'format'
 
   // Move Quiz Modal State
   const [showMoveQuizModal, setShowMoveQuizModal] = useState(false);
@@ -93,6 +105,7 @@ export default function App() {
   
   const [correctUncertainOpen, setCorrectUncertainOpen] = useState(false);
   const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
+  const [uploadingImageIndex, setUploadingImageIndex] = useState(null);
   const supabaseRef = useRef(null);
 
   // Anti-flooding state control variables
@@ -119,7 +132,7 @@ export default function App() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('');
 
-  const [currentUser, setCurrentUser] = useState(() => {
+  const [currentUser] = useState(() => {
     let savedUid = localStorage.getItem('sanctuaryUserId');
     if (!savedUid) {
       savedUid = 'student_' + Math.random().toString(36).substr(2, 9);
@@ -130,7 +143,9 @@ export default function App() {
 
   useEffect(() => {
     if (floodingCooldown <= 0) {
-      if (isFloodingBlocked) setIsFloodingBlocked(false);
+      if (isFloodingBlocked) {
+        setTimeout(() => setIsFloodingBlocked(false), 0);
+      }
       return;
     }
     const timer = setTimeout(() => {
@@ -139,7 +154,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [floodingCooldown, isFloodingBlocked]);
 
-  const verifyRateLimit = () => {
+  const verifyRateLimit = useCallback(() => {
     const now = Date.now();
     const tenSecondsAgo = now - 10000;
     const activeRequests = requestTimestamps.filter(t => t > tenSecondsAgo);
@@ -152,7 +167,7 @@ export default function App() {
     
     setRequestTimestamps([...activeRequests, now]);
     return true;
-  };
+  }, [requestTimestamps]);
 
   useEffect(() => {
     const loadSupabaseScript = () => {
@@ -202,18 +217,28 @@ export default function App() {
     loadSupabaseScript();
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [isSupabaseLoaded]);
+  const fallbackToLocal = useCallback(() => {
+    const localQuizzes = localStorage.getItem('sanctuaryQuizzes');
+    const localGroups = localStorage.getItem('sanctuaryGroups');
+    const localStates = localStorage.getItem('sanctuaryQuizStates');
+    const localMsgs = localStorage.getItem('sanctuaryInbox');
+    const localReports = localStorage.getItem('sanctuaryReports');
 
-  const loadData = async () => {
+    if (localQuizzes) setQuizzes(JSON.parse(localQuizzes));
+    if (localGroups) setGroups(JSON.parse(localGroups));
+    if (localStates) setQuizStates(JSON.parse(localStates));
+    if (localMsgs) setInboxMessages(JSON.parse(localMsgs));
+    if (localReports) setReports(JSON.parse(localReports));
+  }, []);
+
+  const loadData = useCallback(async () => {
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
         const { data: fetchedGroups, error: groupErr } = await supabaseRef.current
           .from('groups')
           .select('*')
-          .order('name', { ascending: true });
+          .order('name');
         if (groupErr) throw groupErr;
         setGroups(fetchedGroups || []);
 
@@ -225,10 +250,10 @@ export default function App() {
         setQuizzes(fetchedQuizzes || []);
 
         const { data: fetchedMsgs } = await supabaseRef.current.from('inbox_messages').select('*').order('created_at', { ascending: false });
-        if (fetchedMsgs) setInboxMessages(fetchedMsgs);
+        setInboxMessages(fetchedMsgs || []);
 
         const { data: fetchedReports } = await supabaseRef.current.from('reported_questions').select('*').order('created_at', { ascending: false });
-        if (fetchedReports) setReports(fetchedReports);
+        setReports(fetchedReports || []);
 
         const { data: progress, error: progErr } = await supabaseRef.current
           .from('user_progress')
@@ -237,11 +262,11 @@ export default function App() {
         if (progErr) throw progErr;
 
         const liveStates = {};
-        progress.forEach(p => {
+        (progress || []).forEach(p => {
           liveStates[p.quiz_id] = {
             currentQuestionIndex: p.current_question_index,
-            userAnswers: p.user_answers || {},
-            uncertainQuestions: p.uncertain_questions || {},
+            userAnswers: p.user_answers,
+            uncertainQuestions: p.uncertain_questions,
             status: p.status
           };
         });
@@ -254,21 +279,13 @@ export default function App() {
     } else {
       fallbackToLocal();
     }
-  };
+  }, [isSupabaseLoaded, currentUser.uid, fallbackToLocal]);
 
-  const fallbackToLocal = () => {
-    const localQuizzes = localStorage.getItem('sanctuaryQuizzes');
-    const localGroups = localStorage.getItem('sanctuaryGroups');
-    const localStates = localStorage.getItem('sanctuaryQuizStates');
-    const localMsgs = localStorage.getItem('sanctuaryInbox');
-    const localReports = localStorage.getItem('sanctuaryReports');
+  useEffect(() => {
+    loadData();
+  }, [isSupabaseLoaded, loadData]);
 
-    if (localQuizzes) setQuizzes(JSON.parse(localQuizzes));
-    if (localGroups) setGroups(JSON.parse(localGroups));
-    if (localStates) setQuizStates(JSON.parse(localStates));
-    if (localMsgs) setInboxMessages(JSON.parse(localMsgs));
-    if (localReports) setReports(JSON.parse(localReports));
-  };
+
 
   const saveLocalFallback = (updatedQuizzes, updatedGroups, updatedStates) => {
     if (updatedQuizzes) localStorage.setItem('sanctuaryQuizzes', JSON.stringify(updatedQuizzes));
@@ -280,43 +297,64 @@ export default function App() {
     localStorage.setItem('academicTheme', theme);
   }, [theme]);
 
+
+
+  // Log Site Visit Effect
   useEffect(() => {
-    if (currentView !== 'taking_quiz' || !activeQuiz || showEditQuestionModal) return;
-
-    const handleKeyDown = (e) => {
-      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
-        return;
-      }
-
-      const currentQ = activeQuiz.questions[currentQuestionIndex];
-      const selectedOptId = userAnswers[currentQuestionIndex];
-      const isAnswered = selectedOptId !== undefined;
-
-      if (!isAnswered) {
-        if (e.key === '1' && currentQ.options[0]) handleOptionSelect(currentQ.options[0].id);
-        else if (e.key === '2' && currentQ.options[1]) handleOptionSelect(currentQ.options[1].id);
-        else if (e.key === '3' && currentQ.options[2]) handleOptionSelect(currentQ.options[2].id);
-        else if (e.key === '4' && currentQ.options[3]) handleOptionSelect(currentQ.options[3].id);
-      }
-
-      if (e.key === 'c' || e.key === 'C') {
-        toggleUncertainty();
-      }
-
-      if (e.key === 'ArrowLeft') {
-        handlePrevQuestion();
-      } else if (e.key === 'ArrowRight') {
-        if (currentQuestionIndex < activeQuiz.questions.length - 1) {
-          handleNextQuestion();
-        } else if (isAnswered) {
-          finishQuiz();
+    const logVisit = async () => {
+      const today = new Date().toISOString().split('T')[0];
+      const lastVisit = localStorage.getItem('sanctuaryLastVisit');
+      if (lastVisit !== today) {
+        localStorage.setItem('sanctuaryLastVisit', today);
+        const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+        if (isSupabaseReady) {
+          try {
+            await supabaseRef.current.from('site_visits').insert([{ user_id: currentUser.uid }]);
+          } catch (e) { console.error("Failed to log visit:", e); }
         }
       }
     };
+    if (isSupabaseLoaded) {
+      logVisit();
+    }
+  }, [isSupabaseLoaded, currentUser.uid]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentView, activeQuiz, currentQuestionIndex, userAnswers, uncertainQuestions, showEditQuestionModal]);
+  // Fetch Analytics Effect
+  useEffect(() => {
+    if (currentView === 'analytics' && isAdmin) {
+      const fetchAnalytics = async () => {
+        const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+        let visitsCount = 0;
+        let uniqueUsersCount = 0;
+        let completedCount = 0;
+        let totalTakenCount = 0;
+
+        if (isSupabaseReady) {
+          try {
+            // Count visits
+            const { count: vCount } = await supabaseRef.current.from('site_visits').select('*', { count: 'exact', head: true });
+            visitsCount = vCount || 0;
+            
+            // Analyze user_progress
+            const { data: upData } = await supabaseRef.current.from('user_progress').select('user_id, status');
+            if (upData) {
+              const uniqueUsers = new Set(upData.map(r => r.user_id));
+              uniqueUsersCount = uniqueUsers.size;
+              totalTakenCount = upData.length;
+              completedCount = upData.filter(r => r.status === 'completed').length;
+            }
+          } catch(e) { console.error("Analytics fetch error:", e); }
+        }
+        setAnalyticsData({
+          visits: visitsCount,
+          totalUsers: uniqueUsersCount,
+          totalQuizzesTaken: totalTakenCount,
+          completedQuizzes: completedCount
+        });
+      };
+      fetchAnalytics();
+    }
+  }, [currentView, isAdmin, isSupabaseLoaded]);
 
   const aiPrompt = `You are acting as an expert university professor and exam designer. 
 
@@ -335,6 +373,32 @@ The JSON must exactly follow this schema:
 
 {
   "quizTitle": "Title of the Quiz Based on Topic",
+  "questions": [
+    {
+      "question": "The question text goes here...",
+      "options": [
+        {
+          "id": "A",
+          "text": "First option text",
+          "isCorrect": false,
+          "explanation": "Detailed explanation of why this choice is correct or incorrect."
+        }
+      ]
+    }
+  ]
+}`;
+
+  const aiPromptFormat = `You are acting as an expert university professor and exam designer.
+
+I have uploaded an existing test or set of raw questions.
+Your task is to properly format this test into a clean JSON structure and add detailed explanations for every correct and incorrect option.
+
+Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
+
+The JSON must exactly follow this schema:
+
+{
+  "quizTitle": "Formatted Test Title",
   "questions": [
     {
       "question": "The question text goes here...",
@@ -411,7 +475,7 @@ The JSON must exactly follow this schema:
     setEditGroupName('');
   };
 
-  const handleDeleteGroup = async (gId) => {
+  const handleDeleteGroup = useCallback(async (gId) => {
     if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
@@ -433,20 +497,21 @@ The JSON must exactly follow this schema:
       setQuizzes(updatedQuizzes);
       saveLocalFallback(updatedQuizzes, updated, null);
     }
-  };
+  }, [isSupabaseLoaded, groups, quizzes, verifyRateLimit]);
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
   const copyToClipboard = () => {
+    const textToCopy = promptTab === 'new' ? aiPrompt : aiPromptFormat;
     try {
-      navigator.clipboard.writeText(aiPrompt);
+      navigator.clipboard.writeText(textToCopy);
       setCopySuccess('Prompt copied to clipboard!');
       setTimeout(() => setCopySuccess(''), 3000);
-    } catch (err) {
+    } catch {
       const textAreax = document.createElement("textarea");
-      textAreax.value = aiPrompt;
+      textAreax.value = textToCopy;
       document.body.appendChild(textAreax);
       textAreax.select();
       document.execCommand("copy");
@@ -600,55 +665,77 @@ The JSON must exactly follow this schema:
     setQuizToMove(null);
   };
 
-  const openEditQuestionPanel = (qIdx) => {
-    if (!isAdmin) return;
-    const targetQ = activeQuiz.questions[qIdx];
-    setEditingQuestionIndex(qIdx);
-    setEditedQuestionData(JSON.parse(JSON.stringify(targetQ))); // deep copy
-    setShowEditQuestionModal(true);
+  const handleCreateBlankQuiz = async () => {
+    if (!verifyRateLimit()) return;
+    const blankQuiz = {
+      quiz_title: "Untitled Assessment",
+      questions: [],
+      group_id: currentGroupId
+    };
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    if (isSupabaseReady) {
+      try {
+        const { data, error } = await supabaseRef.current.from('quizzes').insert([blankQuiz]).select();
+        if (error) throw error;
+        if (data && data[0]) {
+          setQuizzes([data[0], ...quizzes]);
+          setEditedQuizData(JSON.parse(JSON.stringify(data[0])));
+          setCurrentView('edit_quiz');
+        }
+      } catch (e) { console.error("Failed to create blank quiz: " + e.message); }
+    } else {
+      const localQuiz = { ...blankQuiz, id: 'local_' + Date.now() };
+      const updatedQuizzes = [localQuiz, ...quizzes];
+      setQuizzes(updatedQuizzes);
+      saveLocalFallback(updatedQuizzes, null, null);
+      setEditedQuizData(JSON.parse(JSON.stringify(localQuiz)));
+      setCurrentView('edit_quiz');
+    }
   };
 
-  const handleSaveEditedQuestion = async () => {
-    if (!editedQuestionData || editingQuestionIndex === null) return;
+  const openQuizEditor = (quiz, e) => {
+    if (e) e.stopPropagation();
+    if (!isAdmin) return;
+    setEditedQuizData(JSON.parse(JSON.stringify(quiz)));
+    setCurrentView('edit_quiz');
+  };
+
+  const handleSaveEditedQuiz = async () => {
+    if (!editedQuizData) return;
     if (!verifyRateLimit()) return;
 
-    // Update activeQuiz in local state first
-    const updatedQuestions = [...activeQuiz.questions];
-    updatedQuestions[editingQuestionIndex] = editedQuestionData;
-    
-    const updatedQuiz = {
-      ...activeQuiz,
-      questions: updatedQuestions
-    };
-    
-    setActiveQuiz(updatedQuiz);
-
     // Save update to global quiz list
-    const updatedQuizzesList = quizzes.map(q => q.id === activeQuiz.id ? updatedQuiz : q);
+    const updatedQuizzesList = quizzes.map(q => q.id === editedQuizData.id ? editedQuizData : q);
     setQuizzes(updatedQuizzesList);
 
-    // Persist to DB or LocalStorage fallback
+    // If it's the active quiz, update it too
+    if (activeQuiz && activeQuiz.id === editedQuizData.id) {
+      setActiveQuiz(editedQuizData);
+    }
+
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
         const { error } = await supabaseRef.current
           .from('quizzes')
-          .update({ questions: updatedQuestions })
-          .eq('id', activeQuiz.id);
+          .update({ 
+            quiz_title: editedQuizData.quiz_title,
+            questions: editedQuizData.questions 
+          })
+          .eq('id', editedQuizData.id);
         if (error) throw error;
       } catch (err) {
-        console.error("Failed to persist edited question to Supabase:", err);
+        console.error("Failed to persist edited quiz to Supabase:", err);
       }
     } else {
       saveLocalFallback(updatedQuizzesList, null, null);
     }
 
-    setShowEditQuestionModal(false);
-    setEditingQuestionIndex(null);
-    setEditedQuestionData(null);
+    setEditedQuizData(null);
+    setCurrentView('dashboard');
   };
 
-  const deleteQuiz = async (id) => {
+  const deleteQuiz = useCallback(async (id) => {
     if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
@@ -672,9 +759,9 @@ The JSON must exactly follow this schema:
       setQuizStates(newStates);
       saveLocalFallback(null, null, newStates);
     }
-  };
+  }, [isSupabaseLoaded, quizzes, quizStates, verifyRateLimit]);
 
-  const updatePersistentState = async (quizId, updatedProgress) => {
+  const updatePersistentState = useCallback(async (quizId, updatedProgress) => {
     const nextStates = {
       ...quizStates,
       [quizId]: {
@@ -716,9 +803,9 @@ The JSON must exactly follow this schema:
     } else {
       saveLocalFallback(null, null, nextStates);
     }
-  };
+  }, [quizStates, isSupabaseLoaded, currentUser, verifyRateLimit]);
 
-  const startQuiz = (quiz) => {
+  const startQuiz = useCallback((quiz) => {
     const freshState = {
       currentQuestionIndex: 0,
       userAnswers: {},
@@ -733,7 +820,7 @@ The JSON must exactly follow this schema:
     setUserAnswers({});
     setUncertainQuestions({});
     setCurrentView('taking_quiz');
-  };
+  }, [updatePersistentState]);
 
   const continueQuiz = (quiz) => {
     const savedState = quizStates[quiz.id] || { 
@@ -750,7 +837,7 @@ The JSON must exactly follow this schema:
     setCurrentView('taking_quiz');
   };
 
-  const resetProgress = (quizId) => {
+  const resetProgress = useCallback((quizId) => {
     const freshState = {
       currentQuestionIndex: 0,
       userAnswers: {},
@@ -758,9 +845,17 @@ The JSON must exactly follow this schema:
       status: 'in_progress'
     };
     updatePersistentState(quizId, freshState);
-  };
+  }, [updatePersistentState]);
 
-  const handleOptionSelect = (optionId) => {
+  const finishQuiz = useCallback(() => {
+    updatePersistentState(activeQuiz.id, {
+      status: 'completed'
+    });
+    setCorrectUncertainOpen(false);
+    setCurrentView('review');
+  }, [activeQuiz, updatePersistentState]);
+
+  const handleOptionSelect = useCallback((optionId) => {
     if (userAnswers[currentQuestionIndex] !== undefined) return;
     
     const updatedAnswers = { ...userAnswers, [currentQuestionIndex]: optionId };
@@ -771,9 +866,9 @@ The JSON must exactly follow this schema:
       uncertainQuestions: uncertainQuestions,
       status: 'in_progress'
     });
-  };
+  }, [userAnswers, currentQuestionIndex, activeQuiz, uncertainQuestions, updatePersistentState]);
 
-  const toggleUncertainty = () => {
+  const toggleUncertainty = useCallback(() => {
     const updatedUncertain = {
       ...uncertainQuestions,
       [currentQuestionIndex]: !uncertainQuestions[currentQuestionIndex]
@@ -783,9 +878,9 @@ The JSON must exactly follow this schema:
     updatePersistentState(activeQuiz.id, {
       uncertainQuestions: updatedUncertain
     });
-  };
+  }, [uncertainQuestions, currentQuestionIndex, activeQuiz, updatePersistentState]);
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = useCallback(() => {
     const nextIndex = currentQuestionIndex + 1;
     if (nextIndex < activeQuiz.questions.length) {
       setCurrentQuestionIndex(nextIndex);
@@ -795,9 +890,9 @@ The JSON must exactly follow this schema:
     } else {
       finishQuiz();
     }
-  };
+  }, [currentQuestionIndex, activeQuiz, updatePersistentState, finishQuiz]);
 
-  const handlePrevQuestion = () => {
+  const handlePrevQuestion = useCallback(() => {
     const prevIndex = currentQuestionIndex - 1;
     if (prevIndex >= 0) {
       setCurrentQuestionIndex(prevIndex);
@@ -805,22 +900,188 @@ The JSON must exactly follow this schema:
         currentQuestionIndex: prevIndex
       });
     }
-  };
+  }, [currentQuestionIndex, activeQuiz, updatePersistentState]);
 
-  const handleJumpToQuestion = (idx) => {
+  const handleJumpToQuestion = useCallback((idx) => {
     setCurrentQuestionIndex(idx);
     updatePersistentState(activeQuiz.id, {
       currentQuestionIndex: idx
     });
-  };
+  }, [activeQuiz, updatePersistentState]);
 
-  const finishQuiz = () => {
-    updatePersistentState(activeQuiz.id, {
-      status: 'completed'
-    });
-    setCorrectUncertainOpen(false);
-    setCurrentView('review');
-  };
+  const handleResolveReport = useCallback(async (reportId) => {
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    if (isSupabaseReady) {
+      try {
+        await supabaseRef.current.from('reported_questions').update({ status: 'resolved' }).eq('id', reportId);
+      } catch (e) {
+        console.error("Failed to resolve report:", e);
+      }
+    }
+    setReports(prev => prev.map(rep => rep.id === reportId ? { ...rep, status: 'resolved' } : rep));
+  }, [isSupabaseLoaded]);
+
+  const handleImagePasteOrUpload = useCallback(async (file, qIdx) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Only image files are supported.');
+      return;
+    }
+
+    setUploadingImageIndex(qIdx);
+
+    try {
+      // 1. Compress image to avoid local storage bloat & keep Supabase transfers fast
+      const compressImage = (fileToCompress) => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(fileToCompress);
+          reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+              const canvas = document.createElement('canvas');
+              const MAX_WIDTH = 1200;
+              const MAX_HEIGHT = 1200;
+              let width = img.width;
+              let height = img.height;
+
+              if (width > height) {
+                if (width > MAX_WIDTH) {
+                  height = Math.round((height * MAX_WIDTH) / width);
+                  width = MAX_WIDTH;
+                }
+              } else {
+                if (height > MAX_HEIGHT) {
+                  width = Math.round((width * MAX_HEIGHT) / height);
+                  height = MAX_HEIGHT;
+                }
+              }
+
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+
+              canvas.toBlob((blob) => {
+                if (blob) {
+                  const compressedFile = new File([blob], fileToCompress.name || 'image.jpg', {
+                    type: 'image/jpeg',
+                    lastModified: Date.now()
+                  });
+                  resolve({
+                    file: compressedFile,
+                    base64: canvas.toDataURL('image/jpeg', 0.8)
+                  });
+                } else {
+                  resolve({ file: fileToCompress, base64: event.target.result });
+                }
+              }, 'image/jpeg', 0.8);
+            };
+            img.onerror = () => resolve({ file: fileToCompress, base64: event.target.result });
+          };
+          reader.onerror = () => resolve({ file: fileToCompress, base64: event.target.result });
+        });
+      };
+
+      const { file: compressedFile, base64 } = await compressImage(file);
+
+      // 2. Decide storage strategy
+      const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+      if (isSupabaseReady) {
+        // Upload to Supabase Storage
+        const fileExt = file.name ? file.name.split('.').pop() : 'jpg';
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+        const filePath = `questions/${fileName}`;
+
+        // Attempt upload to 'quiz-images' bucket
+        const { error: uploadErr } = await supabaseRef.current.storage
+          .from('quiz-images')
+          .upload(filePath, compressedFile, {
+            cacheControl: '3600',
+            upsert: true
+          });
+
+        if (uploadErr) {
+          console.warn("Supabase storage upload failed, falling back to Base64:", uploadErr);
+          // Fallback to base64
+          const qs = [...editedQuizData.questions];
+          qs[qIdx].imageUrl = base64;
+          setEditedQuizData({ ...editedQuizData, questions: qs });
+          // Notify user
+          alert("Uploaded as localized Base64. (To use cloud storage, please ensure a public 'quiz-images' bucket is created in Supabase)");
+        } else {
+          // Get public URL
+          const { data: publicUrlData } = supabaseRef.current.storage
+            .from('quiz-images')
+            .getPublicUrl(filePath);
+
+          const qs = [...editedQuizData.questions];
+          qs[qIdx].imageUrl = publicUrlData.publicUrl;
+          setEditedQuizData({ ...editedQuizData, questions: qs });
+        }
+      } else {
+        // Fallback to Base64 local data URL
+        const qs = [...editedQuizData.questions];
+        qs[qIdx].imageUrl = base64;
+        setEditedQuizData({ ...editedQuizData, questions: qs });
+      }
+    } catch (err) {
+      console.error("Error processing image:", err);
+      alert("Failed to process image.");
+    } finally {
+      setUploadingImageIndex(null);
+    }
+  }, [isSupabaseLoaded, editedQuizData, setEditedQuizData]);
+
+  useEffect(() => {
+    if (currentView !== 'taking_quiz' || !activeQuiz) return;
+
+    const handleKeyDown = (e) => {
+      if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      const currentQ = activeQuiz.questions[currentQuestionIndex];
+      const selectedOptId = userAnswers[currentQuestionIndex];
+      const isAnswered = selectedOptId !== undefined;
+
+      if (!isAnswered) {
+        if (e.key === '1' && currentQ.options[0]) handleOptionSelect(currentQ.options[0].id);
+        else if (e.key === '2' && currentQ.options[1]) handleOptionSelect(currentQ.options[1].id);
+        else if (e.key === '3' && currentQ.options[2]) handleOptionSelect(currentQ.options[2].id);
+        else if (e.key === '4' && currentQ.options[3]) handleOptionSelect(currentQ.options[3].id);
+      }
+
+      if (e.key === 'c' || e.key === 'C') {
+        toggleUncertainty();
+      }
+
+      if (e.key === 'ArrowLeft') {
+        handlePrevQuestion();
+      } else if (e.key === 'ArrowRight') {
+        if (currentQuestionIndex < activeQuiz.questions.length - 1) {
+          handleNextQuestion();
+        } else if (isAnswered) {
+          finishQuiz();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    currentView,
+    activeQuiz,
+    currentQuestionIndex,
+    userAnswers,
+    uncertainQuestions,
+    finishQuiz,
+    handleNextQuestion,
+    handleOptionSelect,
+    handlePrevQuestion,
+    toggleUncertainty
+  ]);
 
   const reviewSavedQuiz = (quiz) => {
     const savedState = quizStates[quiz.id];
@@ -970,6 +1231,18 @@ The JSON must exactly follow this schema:
                   <FileText className="w-4 h-4 text-[#C5A059]" /> Exam Prompt
                 </button>
                 <button 
+                  onClick={() => setCurrentView('analytics')}
+                  className="flex items-center gap-2 px-4 py-2 border border-emerald-500/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-all duration-300 rounded-lg text-sm font-semibold"
+                >
+                  <BarChart2 className="w-4 h-4" /> Analytics
+                </button>
+                <button 
+                  onClick={handleCreateBlankQuiz}
+                  className="flex items-center gap-2 px-4 py-2 border border-[#C5A059]/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md dark:text-[#D4AF37] text-slate-700 hover:bg-[#C5A059]/10 transition-all duration-300 rounded-lg text-sm font-semibold"
+                >
+                  <PlusCircle className="w-4 h-4 text-[#C5A059]" /> Blank Assessment
+                </button>
+                <button 
                   onClick={() => setCurrentView('add_quiz')}
                   className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] hover:opacity-95 transition-all duration-300 rounded-lg shadow-md shadow-[#D4AF37]/15 text-sm font-semibold"
                 >
@@ -1020,7 +1293,7 @@ The JSON must exactly follow this schema:
           >
             <Home className="w-3.5 h-3.5" /> HOME
           </button>
-          {getBreadcrumbs().map((b, idx) => (
+          {getBreadcrumbs().map((b) => (
             <React.Fragment key={b.id}>
               <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
               <button 
@@ -1167,7 +1440,14 @@ The JSON must exactly follow this schema:
                       
                       <div className="pl-2">
                         {isAdmin && (
-                          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
+                          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1 bg-white/60 dark:bg-slate-900/60 p-1 rounded-xl backdrop-blur-md shadow-sm border border-[#C5A059]/20">
+                            <button 
+                              onClick={(e) => openQuizEditor(quiz, e)}
+                              className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-all"
+                              title="Edit Assessment"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
                             <button 
                               onClick={(e) => handleOpenMoveModal(quiz, e)}
                               className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-[#D4AF37] hover:bg-[#C5A059]/10 transition-all"
@@ -1276,6 +1556,260 @@ The JSON must exactly follow this schema:
     </div>
   );
 
+  const renderEditQuiz = () => {
+    if (!editedQuizData) return null;
+
+    const addQuestion = () => {
+      const newQ = { question: "New Question", options: [], imageUrl: "" };
+      setEditedQuizData({ ...editedQuizData, questions: [...editedQuizData.questions, newQ] });
+    };
+
+    const deleteQuestion = (qIdx) => {
+      const qs = [...editedQuizData.questions];
+      qs.splice(qIdx, 1);
+      setEditedQuizData({ ...editedQuizData, questions: qs });
+    };
+
+    const addOption = (qIdx) => {
+      const qs = [...editedQuizData.questions];
+      const newOptId = String.fromCharCode(65 + qs[qIdx].options.length); // 'A', 'B', etc.
+      qs[qIdx].options.push({ id: newOptId, text: "New Option", isCorrect: false, explanation: "" });
+      setEditedQuizData({ ...editedQuizData, questions: qs });
+    };
+
+    const removeOption = (qIdx, oIdx) => {
+      const qs = [...editedQuizData.questions];
+      qs[qIdx].options.splice(oIdx, 1);
+      // Reassign IDs
+      qs[qIdx].options.forEach((o, i) => o.id = String.fromCharCode(65 + i));
+      setEditedQuizData({ ...editedQuizData, questions: qs });
+    };
+
+
+
+    const handlePaste = (e, qIdx) => {
+      const items = (e.clipboardData || e.originalEvent?.clipboardData)?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const file = items[i].getAsFile();
+          if (file) {
+            handleImagePasteOrUpload(file, qIdx);
+            e.preventDefault();
+            break;
+          }
+        }
+      }
+    };
+
+    return (
+      <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
+        <div>
+          <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
+            <ChevronLeft className="w-4 h-4" /> Back to Dashboard
+          </button>
+
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md mb-8">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
+            <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
+              <Edit3 className="w-6 h-6 text-[#C5A059]" />
+              <h2 className="text-2xl font-serif font-bold">Edit Assessment</h2>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] mb-1.5 font-mono">Assessment Title</label>
+              <input 
+                type="text" 
+                value={editedQuizData.quiz_title}
+                onChange={(e) => setEditedQuizData({ ...editedQuizData, quiz_title: e.target.value })}
+                className="w-full px-4 py-3 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] text-lg font-serif font-bold"
+              />
+            </div>
+
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-serif font-bold text-lg text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-[#C5A059]" /> Questions ({editedQuizData.questions.length})
+              </h3>
+              <button 
+                onClick={addQuestion}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#C5A059]/10 text-[#C5A059] hover:bg-[#C5A059]/20 rounded-lg text-xs font-bold transition-all"
+              >
+                <PlusCircle className="w-4 h-4" /> Add Question
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {editedQuizData.questions.map((q, qIdx) => (
+                <div key={qIdx} className="p-5 border border-[#C5A059]/20 rounded-xl bg-slate-50/50 dark:bg-slate-900/50 space-y-4 relative group">
+                  <button 
+                    onClick={() => deleteQuestion(qIdx)}
+                    className="absolute top-4 right-4 text-rose-500 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Delete Question"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 font-mono">Question {qIdx + 1} Text</label>
+                    <textarea 
+                      value={q.question}
+                      onChange={(e) => {
+                        const qs = [...editedQuizData.questions];
+                        qs[qIdx].question = e.target.value;
+                        setEditedQuizData({ ...editedQuizData, questions: qs });
+                      }}
+                      onPaste={(e) => handlePaste(e, qIdx)}
+                      className="w-full px-4 py-2 border border-[#C5A059]/30 rounded-xl bg-white/20 dark:bg-slate-950/40 focus:outline-none focus:border-[#D4AF37] text-sm font-semibold pr-10"
+                      rows="2"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 font-mono flex items-center gap-1">
+                      <ImageIcon className="w-3.5 h-3.5" /> Image URL (Optional)
+                    </label>
+                    <div className="flex gap-2 items-center mt-1.5">
+                      <input 
+                        type="text" 
+                        value={q.imageUrl || ''}
+                        onChange={(e) => {
+                          const qs = [...editedQuizData.questions];
+                          qs[qIdx].imageUrl = e.target.value;
+                          setEditedQuizData({ ...editedQuizData, questions: qs });
+                        }}
+                        onPaste={(e) => handlePaste(e, qIdx)}
+                        placeholder="Paste image URL here, or Ctrl+V image file"
+                        className="flex-grow px-4 py-2 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 bg-white/20 text-sm focus:outline-none focus:border-[#D4AF37]"
+                      />
+                      <label className="flex items-center gap-1.5 px-3 py-2 bg-[#C5A059]/10 text-[#C5A059] hover:bg-[#C5A059]/25 border border-[#C5A059]/30 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload</span>
+                        <input 
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              handleImagePasteOrUpload(e.target.files[0], qIdx);
+                            }
+                          }}
+                        />
+                      </label>
+                      {q.imageUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const qs = [...editedQuizData.questions];
+                            qs[qIdx].imageUrl = '';
+                            setEditedQuizData({ ...editedQuizData, questions: qs });
+                          }}
+                          className="px-2.5 py-2 border border-rose-500/30 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 rounded-xl text-xs font-bold transition-all"
+                          title="Remove Image"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {uploadingImageIndex === qIdx && (
+                      <div className="flex items-center gap-2 mt-1.5 text-xs text-[#D4AF37] font-mono animate-pulse">
+                        <div className="w-3 h-3 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin"></div>
+                        <span>Processing and uploading image...</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] font-mono">Options & Explanations</label>
+                      <button 
+                        onClick={() => addOption(qIdx)}
+                        className="text-xs font-bold text-emerald-500 hover:text-emerald-600 flex items-center gap-1"
+                      >
+                        <PlusCircle className="w-3 h-3" /> Add Option
+                      </button>
+                    </div>
+                    {q.options && q.options.map((opt, oIdx) => (
+                      <div key={opt.id} className="p-3 border border-[#C5A059]/15 rounded-xl bg-white/40 dark:bg-slate-950/40 space-y-2 relative">
+                        <div className="flex items-center gap-2 pr-6">
+                          <span className="font-bold text-[#D4AF37] font-mono min-w-[20px]">{opt.id}</span>
+                          <input 
+                            type="text"
+                            value={opt.text}
+                            onChange={(e) => {
+                              const qs = [...editedQuizData.questions];
+                              qs[qIdx].options[oIdx].text = e.target.value;
+                              setEditedQuizData({ ...editedQuizData, questions: qs });
+                            }}
+                            className="flex-grow px-3 py-1.5 border border-[#C5A059]/20 rounded-lg bg-white/20 dark:bg-slate-900/50 focus:outline-none text-sm font-semibold"
+                            placeholder="Option Text"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            title="Mark as correct option"
+                            onClick={() => {
+                              const qs = [...editedQuizData.questions];
+                              qs[qIdx].options.forEach(o => o.isCorrect = false);
+                              qs[qIdx].options[oIdx].isCorrect = true;
+                              setEditedQuizData({ ...editedQuizData, questions: qs });
+                            }}
+                            className={`shrink-0 p-1.5 rounded-lg border transition-all ${
+                              opt.isCorrect 
+                                ? 'bg-emerald-500/20 border-emerald-500 text-emerald-500' 
+                                : 'border-slate-300 dark:border-slate-700 text-slate-400 hover:text-emerald-500 hover:border-emerald-500'
+                            }`}
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <input 
+                            type="text"
+                            value={opt.explanation || ''}
+                            onChange={(e) => {
+                              const qs = [...editedQuizData.questions];
+                              qs[qIdx].options[oIdx].explanation = e.target.value;
+                              setEditedQuizData({ ...editedQuizData, questions: qs });
+                            }}
+                            className="w-full px-3 py-1.5 border border-[#C5A059]/10 rounded-lg bg-white/10 dark:bg-slate-900/20 focus:outline-none text-xs"
+                            placeholder="Why is this option correct/incorrect?"
+                          />
+                        </div>
+                        {q.options.length > 2 && (
+                          <button 
+                            onClick={() => removeOption(qIdx, oIdx)}
+                            className="absolute top-2 right-2 text-rose-400 hover:text-rose-500"
+                            title="Remove option"
+                          >
+                            <MinusCircle className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              
+              {editedQuizData.questions.length === 0 && (
+                <div className="text-center p-8 border border-dashed border-[#C5A059]/30 rounded-xl text-slate-500">
+                  <p>No questions yet. Click "Add Question" to start building your assessment.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-8 flex justify-end">
+              <button 
+                onClick={handleSaveEditedQuiz}
+                className="w-full sm:w-auto px-8 py-3 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] hover:opacity-90 rounded-xl transition-all duration-300 font-bold shadow-md shadow-[#D4AF37]/15 flex items-center justify-center gap-2"
+              >
+                <Save className="w-5 h-5" /> Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+        {renderSignatureFooter()}
+      </div>
+    );
+  };
+
   const renderAddQuiz = () => (
     <div className="w-full max-w-3xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
@@ -1344,6 +1878,61 @@ The JSON must exactly follow this schema:
     </div>
   );
 
+  const renderAnalytics = () => (
+    <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
+      <div>
+        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
+          <ChevronLeft className="w-4 h-4" /> Back to Dashboard
+        </button>
+
+        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-emerald-400"></div>
+          <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-8">
+            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500">
+              <BarChart2 className="w-6 h-6" />
+            </div>
+            <h2 className="text-2xl font-serif font-bold">Admin Analytics Dashboard</h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div className="p-6 border border-[#C5A059]/20 rounded-2xl bg-white/50 dark:bg-slate-900/50 flex flex-col items-center justify-center relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <Activity className="w-20 h-20 text-[#C5A059]" />
+              </div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[#C5A059] mb-2 font-mono">Total Site Visits</p>
+              <h3 className="text-5xl font-black text-slate-800 dark:text-slate-100">{analyticsData.visits}</h3>
+            </div>
+            
+            <div className="p-6 border border-[#C5A059]/20 rounded-2xl bg-white/50 dark:bg-slate-900/50 flex flex-col items-center justify-center relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <Users className="w-20 h-20 text-[#D4AF37]" />
+              </div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[#C5A059] mb-2 font-mono">Unique Active Students</p>
+              <h3 className="text-5xl font-black text-slate-800 dark:text-slate-100">{analyticsData.totalUsers}</h3>
+            </div>
+
+            <div className="p-6 border border-[#C5A059]/20 rounded-2xl bg-white/50 dark:bg-slate-900/50 flex flex-col items-center justify-center relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <BookOpen className="w-20 h-20 text-[#C5A059]" />
+              </div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[#C5A059] mb-2 font-mono">Total Assessments Taken</p>
+              <h3 className="text-5xl font-black text-slate-800 dark:text-slate-100">{analyticsData.totalQuizzesTaken}</h3>
+            </div>
+
+            <div className="p-6 border border-emerald-500/30 rounded-2xl bg-emerald-500/5 flex flex-col items-center justify-center relative overflow-hidden shadow-[inset_0_0_20px_rgba(16,185,129,0.05)]">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <CheckCircle2 className="w-20 h-20 text-emerald-500" />
+              </div>
+              <p className="text-xs font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400 mb-2 font-mono">Assessments Completed</p>
+              <h3 className="text-5xl font-black text-emerald-700 dark:text-emerald-300">{analyticsData.completedQuizzes}</h3>
+            </div>
+          </div>
+        </div>
+      </div>
+      {renderSignatureFooter()}
+    </div>
+  );
+
   const renderPrompt = () => (
     <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
       <div>
@@ -1354,7 +1943,7 @@ The JSON must exactly follow this schema:
         <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-            <h2 className="text-2xl font-serif dark:text-white text-slate-900 font-bold">AI Exam Generator Prompt</h2>
+            <h2 className="text-2xl font-serif dark:text-white text-slate-900 font-bold">AI Exam Prompts</h2>
             <button 
               onClick={copyToClipboard}
               className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-[#C5A059]/10 border border-[#C5A059]/30 text-slate-700 dark:text-slate-200 hover:bg-[#C5A059]/25 transition-all duration-300 rounded-xl text-xs font-bold shadow-sm"
@@ -1362,13 +1951,39 @@ The JSON must exactly follow this schema:
               <Copy className="w-4 h-4 text-[#C5A059]" /> {copySuccess || 'Copy Prompt'}
             </button>
           </div>
+          
+          <div className="flex gap-2 mb-6 p-1 bg-white/20 dark:bg-slate-900/40 rounded-xl max-w-sm">
+            <button
+              onClick={() => setPromptTab('new')}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                promptTab === 'new' 
+                  ? 'bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] shadow-md' 
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+              }`}
+            >
+              Generate New Exam
+            </button>
+            <button
+              onClick={() => setPromptTab('format')}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
+                promptTab === 'format' 
+                  ? 'bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] shadow-md' 
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+              }`}
+            >
+              Format Existing Test
+            </button>
+          </div>
+
           <p className="dark:text-slate-400 text-slate-600 mb-6 border-b border-slate-200/55 dark:border-slate-800/80 pb-6 text-sm">
-            Copy this instructional prompt and provide it to your preferred AI model along with your lecture notes.
+            {promptTab === 'new' 
+              ? "Copy this instructional prompt and provide it to your preferred AI model along with your lecture notes."
+              : "Copy this instructional prompt and provide it to your preferred AI model along with a raw test or list of questions."}
           </p>
 
           <div className="bg-white/10 dark:bg-slate-950/30 border border-[#C5A059]/20 p-6 rounded-xl overflow-y-auto max-h-[50vh] custom-scrollbar shadow-inner">
             <pre className="dark:text-slate-300 text-slate-700 font-mono text-xs md:text-sm whitespace-pre-wrap leading-relaxed select-all">
-              {aiPrompt}
+              {promptTab === 'new' ? aiPrompt : aiPromptFormat}
             </pre>
           </div>
         </div>
@@ -1402,7 +2017,7 @@ The JSON must exactly follow this schema:
               {/* ADMIN EDIT BUTTON */}
               {isAdmin && (
                 <button 
-                  onClick={() => openEditQuestionPanel(currentQuestionIndex)}
+                  onClick={() => openQuizEditor(activeQuiz)}
                   className="flex items-center gap-1.5 text-xs font-bold text-[#D4AF37] bg-[#C5A059]/10 hover:bg-[#C5A059]/25 border border-[#C5A059]/30 px-3.5 py-2 rounded-lg transition-all"
                 >
                   <Edit3 className="w-3.5 h-3.5" /> Edit Question
@@ -1450,9 +2065,9 @@ The JSON must exactly follow this schema:
               const isCurrent = currentQuestionIndex === idx;
               const qUncertain = uncertainQuestions[idx] === true;
 
-              let borderClass = "";
-              let bgClass = "";
-              let textClass = "";
+              let borderClass;
+              let bgClass;
+              let textClass;
 
               if (qUncertain) {
                 borderClass = "border-amber-500 shadow-amber-500/10 shadow-md";
@@ -1509,6 +2124,16 @@ The JSON must exactly follow this schema:
                 <Flag className="w-5 h-5" />
               </button>
             </div>
+
+            {currentQ.imageUrl && (
+              <div className="mb-8 flex justify-center bg-white/10 dark:bg-slate-900/20 p-2 rounded-xl border border-[#C5A059]/10">
+                <img 
+                  src={currentQ.imageUrl} 
+                  alt="Question figure" 
+                  className="max-h-80 w-auto object-contain rounded-lg shadow-sm"
+                />
+              </div>
+            )}
 
             {/* Resolving low-contrast styling issues dynamically from image_870832.png */}
             <div className="space-y-4">
@@ -1851,13 +2476,7 @@ The JSON must exactly follow this schema:
                     </div>
                     {r.status === 'open' && (
                       <button 
-                        onClick={async () => {
-                          const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
-                          if (isSupabaseReady) {
-                            await supabaseRef.current.from('reported_questions').update({ status: 'resolved' }).eq('id', r.id);
-                          }
-                          setReports(reports.map(rep => rep.id === r.id ? { ...rep, status: 'resolved' } : rep));
-                        }}
+                        onClick={() => handleResolveReport(r.id)}
                         className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 rounded-lg text-xs font-bold transition-all"
                       >
                         <CheckCircle2 className="w-4 h-4" /> Mark Resolved
@@ -1987,10 +2606,12 @@ The JSON must exactly follow this schema:
       <main className="pb-20 w-full flex justify-center relative z-10">
         {currentView === 'dashboard' && renderDashboard()}
         {currentView === 'add_quiz' && renderAddQuiz()}
+        {currentView === 'edit_quiz' && renderEditQuiz()}
         {currentView === 'prompt' && renderPrompt()}
         {currentView === 'taking_quiz' && renderTakingQuiz()}
         {currentView === 'review' && renderReview()}
         {currentView === 'reports' && renderReports()}
+        {currentView === 'analytics' && renderAnalytics()}
       </main>
 
       {/* ========================================== */}
@@ -2028,123 +2649,7 @@ The JSON must exactly follow this schema:
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* ADMIN LIVE EDIT MODAL (SOPHISTICATED OVERLAY) */}
-      {/* ========================================== */}
-      {showEditQuestionModal && editedQuestionData && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-lg flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-[#0d1321] border border-[#C5A059] rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl relative custom-scrollbar">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
-            
-            <div className="flex items-center justify-between mb-6 border-b border-[#C5A059]/20 pb-3">
-              <div className="flex items-center gap-2">
-                <Edit3 className="w-5 h-5 text-[#D4AF37]" />
-                <h3 className="font-serif text-xl font-bold text-slate-900 dark:text-white">Live Edit Question {editingQuestionIndex + 1}</h3>
-              </div>
-              <button 
-                onClick={() => setShowEditQuestionModal(false)}
-                className="text-slate-400 hover:text-slate-200"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
 
-            <div className="space-y-4 text-slate-800 dark:text-slate-200">
-              {/* Question text field */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] mb-1 font-mono">Question Text</label>
-                <textarea 
-                  value={editedQuestionData.question}
-                  onChange={(e) => setEditedQuestionData({
-                    ...editedQuestionData,
-                    question: e.target.value
-                  })}
-                  className="w-full px-4 py-2 border border-[#C5A059]/30 rounded-xl bg-white/20 dark:bg-slate-950/40 focus:outline-none focus:border-[#D4AF37]"
-                  rows="3"
-                />
-              </div>
-
-              {/* Options fields */}
-              <div className="space-y-3">
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] font-mono">Options & Explanations</label>
-                {editedQuestionData.options.map((opt, oIdx) => (
-                  <div key={opt.id} className="p-3 border border-[#C5A059]/15 rounded-xl bg-slate-500/5 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-[#D4AF37] font-mono">{opt.id}</span>
-                      <input 
-                        type="text"
-                        value={opt.text}
-                        onChange={(e) => {
-                          const updatedOpts = [...editedQuestionData.options];
-                          updatedOpts[oIdx].text = e.target.value;
-                          setEditedQuestionData({ ...editedQuestionData, options: updatedOpts });
-                        }}
-                        className="flex-grow px-3 py-1 border border-[#C5A059]/20 rounded-lg bg-white/20 dark:bg-slate-950/20 focus:outline-none text-sm font-semibold"
-                        placeholder="Option Text"
-                      />
-                    </div>
-                    <div>
-                      <input 
-                        type="text"
-                        value={opt.explanation}
-                        onChange={(e) => {
-                          const updatedOpts = [...editedQuestionData.options];
-                          updatedOpts[oIdx].explanation = e.target.value;
-                          setEditedQuestionData({ ...editedQuestionData, options: updatedOpts });
-                        }}
-                        className="w-full px-3 py-1 border border-[#C5A059]/10 rounded-lg bg-white/10 dark:bg-slate-950/10 focus:outline-none text-xs"
-                        placeholder="Why is this option correct/incorrect?"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Select Correct Option */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] mb-1.5 font-mono">Correct Option</label>
-                <div className="flex gap-4">
-                  {editedQuestionData.options.map((opt, oIdx) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => {
-                        const updatedOpts = editedQuestionData.options.map(o => ({
-                          ...o,
-                          isCorrect: o.id === opt.id
-                        }));
-                        setEditedQuestionData({ ...editedQuestionData, options: updatedOpts });
-                      }}
-                      className={`px-4 py-2 rounded-lg font-bold text-sm border transition-all ${
-                        opt.isCorrect 
-                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400 shadow-sm'
-                          : 'border-[#C5A059]/20 text-slate-500 hover:bg-[#C5A059]/10'
-                      }`}
-                    >
-                      {opt.id}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 text-sm font-bold border-t border-[#C5A059]/20 mt-6 pt-4">
-              <button 
-                onClick={() => setShowEditQuestionModal(false)}
-                className="px-4 py-2 border border-[#C5A059]/30 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleSaveEditedQuestion}
-                className="flex items-center gap-1.5 px-5 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all shadow-md text-xs font-bold"
-              >
-                <Save className="w-4 h-4" /> Save Question Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================== */}
       {/* ADMIN QUIZ MOVE LOCATION MODAL */}
