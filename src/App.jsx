@@ -47,7 +47,8 @@ import {
   MinusCircle,
   Users,
   Activity,
-  Upload
+  Upload,
+  Download
 } from "lucide-react";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ""; 
@@ -1144,6 +1145,83 @@ The JSON must exactly follow this schema:
     return { incorrect, correctButUncertain };
   };
 
+  const downloadMistakesFile = () => {
+    if (!activeQuiz) return;
+    const { incorrect } = computeReviewData();
+    if (incorrect.length === 0) return;
+
+    const totalQuestions = activeQuiz.questions.length;
+    const score = totalQuestions - incorrect.length;
+    const percentage = Math.round((score / totalQuestions) * 100);
+
+    let content = `=========================================\n`;
+    content += `SCHOLAR'S SANCTUARY - MISTAKES REPORT\n`;
+    content += `=========================================\n`;
+    content += `Assessment: ${activeQuiz.quiz_title}\n`;
+    content += `Date: ${new Date().toLocaleString()}\n`;
+    content += `Score: ${score} / ${totalQuestions} (${percentage}%)\n`;
+    content += `Total Mistakes: ${incorrect.length}\n\n`;
+    content += `-----------------------------------------\n\n`;
+
+    incorrect.forEach((item, idx) => {
+      const q = item.question;
+      const selectedOpt = q.options.find(o => o.id === item.selectedOptionId);
+      const correctOpt = q.options.find(o => o.isCorrect);
+
+      content += `Mistake #${idx + 1} (Question #${item.index + 1}):\n`;
+      content += `Question: ${q.question}\n`;
+      content += `Confidence Status: ${item.isUncertain ? 'Uncertain' : 'Confident'}\n\n`;
+      
+      content += `Your Choice:\n`;
+      if (selectedOpt) {
+        content += `  [${selectedOpt.id}] ${selectedOpt.text}\n`;
+        if (selectedOpt.explanation) {
+          content += `  Explanation: ${selectedOpt.explanation}\n`;
+        }
+      } else {
+        content += `  [No Option Selected / Skipped]\n`;
+      }
+      content += `\n`;
+
+      content += `Correct Answer:\n`;
+      if (correctOpt) {
+        content += `  [${correctOpt.id}] ${correctOpt.text}\n`;
+        if (correctOpt.explanation) {
+          content += `  Explanation: ${correctOpt.explanation}\n`;
+        }
+      } else {
+        content += `  [No Correct Option Designated]\n`;
+      }
+      content += `\n`;
+
+      content += `Option Analysis:\n`;
+      q.options.forEach(o => {
+        const marker = o.isCorrect 
+          ? `[Correct Answer]` 
+          : (o.id === item.selectedOptionId ? `[Your Choice]` : `[Option]`);
+        content += `  • ${o.id}. ${o.text} ${marker}\n`;
+        if (o.explanation) {
+          content += `    Explanation: ${o.explanation}\n`;
+        }
+      });
+      
+      content += `\n-----------------------------------------\n\n`;
+    });
+
+    content += `End of report.\n`;
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const cleanTitle = activeQuiz.quiz_title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    link.download = `${cleanTitle}_mistakes.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const renderSignatureFooter = () => (
     <footer className="w-full text-center py-10 border-t border-[#C5A059]/20 mt-20 text-xs text-slate-500 font-serif">
       <div className="flex flex-col items-center justify-center gap-3">
@@ -1572,8 +1650,18 @@ The JSON must exactly follow this schema:
 
     const addOption = (qIdx) => {
       const qs = [...editedQuizData.questions];
-      const newOptId = String.fromCharCode(65 + qs[qIdx].options.length); // 'A', 'B', etc.
-      qs[qIdx].options.push({ id: newOptId, text: "New Option", isCorrect: false, explanation: "" });
+      const existingIds = new Set((qs[qIdx].options || []).map(o => o.id.toUpperCase()));
+      let nextCharCode = 65; // 'A'
+      while (existingIds.has(String.fromCharCode(nextCharCode))) {
+        nextCharCode++;
+      }
+      const newOptId = String.fromCharCode(nextCharCode);
+      const newOpt = { id: newOptId, text: "New Option", isCorrect: false, explanation: "" };
+      
+      const newOptions = [...(qs[qIdx].options || []), newOpt];
+      newOptions.sort((a, b) => a.id.localeCompare(b.id));
+      
+      qs[qIdx].options = newOptions;
       setEditedQuizData({ ...editedQuizData, questions: qs });
     };
 
@@ -2338,13 +2426,48 @@ The JSON must exactly follow this schema:
                     </div>
 
                     <div className="mt-4 pt-4 border-t border-[#C5A059]/20 pl-2">
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 block mb-3 font-mono font-sans">Other Options Analysis</span>
-                      <div className="space-y-2">
-                        {q.options.filter(o => o.id !== correctOpt.id && o.id !== item.selectedOptionId).map(opt => (
-                          <div key={opt.id} className="text-xs dark:text-slate-400 text-slate-600 font-medium">
-                            <span className="font-bold text-slate-500 mr-1.5 font-mono">{opt.id}.</span> {opt.explanation}
-                          </div>
-                        ))}
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-550 dark:text-slate-400 block mb-3 font-mono font-sans">All Options Reference</span>
+                      <div className="space-y-3">
+                        {q.options.map(opt => {
+                          const isChosen = opt.id === item.selectedOptionId;
+                          const isCorrect = opt.isCorrect;
+                          
+                          let badgeText = "";
+                          let itemClass = "text-xs font-medium dark:text-slate-400 text-slate-600 p-2.5 rounded-lg border border-transparent";
+                          
+                          if (isCorrect) {
+                            badgeText = "Correct Answer";
+                            itemClass = "text-xs font-semibold dark:text-emerald-400 text-emerald-700 bg-emerald-500/5 border border-emerald-500/10 p-2.5 rounded-lg";
+                          } else if (isChosen) {
+                            badgeText = "Your Choice";
+                            itemClass = "text-xs font-semibold dark:text-rose-400 text-rose-700 bg-rose-500/5 border border-rose-500/10 p-2.5 rounded-lg";
+                          }
+
+                          return (
+                            <div key={opt.id} className={itemClass}>
+                              <div className="flex flex-wrap items-center gap-2 mb-1">
+                                <span className={`font-mono font-bold ${isCorrect ? 'text-emerald-500' : isChosen ? 'text-rose-500' : 'text-[#C5A059]'}`}>
+                                  {opt.id}.
+                                </span>
+                                <span className="font-serif">{opt.text}</span>
+                                {badgeText && (
+                                  <span className={`text-[9px] uppercase tracking-wider font-mono font-bold px-1.5 py-0.5 rounded ${
+                                    isCorrect ? 'bg-emerald-500/20 text-emerald-550 dark:text-emerald-400' : 'bg-rose-500/20 text-rose-500'
+                                  }`}>
+                                    {badgeText}
+                                  </span>
+                                )}
+                              </div>
+                              {opt.explanation && (
+                                <p className={`pl-5 text-xs italic ${
+                                  isCorrect ? 'dark:text-emerald-400/80 text-emerald-600/85' : isChosen ? 'dark:text-rose-400/80 text-rose-600/85' : 'dark:text-slate-500 text-slate-500'
+                                }`}>
+                                  {opt.explanation}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -2418,6 +2541,15 @@ The JSON must exactly follow this schema:
             >
               <Home className="w-5 h-5" /> Return to Sanctuary
             </button>
+            
+            {incorrect.length > 0 && (
+              <button 
+                onClick={downloadMistakesFile}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl transition-all duration-300 font-bold text-sm shadow-sm"
+              >
+                <Download className="w-5 h-5" /> Download Mistakes
+              </button>
+            )}
             
             <button 
               onClick={() => {
