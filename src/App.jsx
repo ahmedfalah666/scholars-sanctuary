@@ -48,11 +48,25 @@ import {
   Users,
   Activity,
   Upload,
-  Download
+  Download,
+  PenLine,
+  EyeOff,
+  Lightbulb,
+  BookOpenCheck
 } from "lucide-react";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ""; 
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+
+// Essay questions carry a self-graded hidden model answer instead of selectable options.
+// A question is treated as an essay when it is explicitly tagged `type: "essay"`, or when a
+// hand-written payload omits `type` but supplies `answerText` and has no options to pick from.
+const isEssayQuestion = (q) => {
+  if (!q) return false;
+  if (q.type === 'essay') return true;
+  if (q.type === 'mcq') return false;
+  return !q.type && !!q.answerText && (!q.options || q.options.length === 0);
+};
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -100,12 +114,16 @@ export default function App() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState({});
   const [uncertainQuestions, setUncertainQuestions] = useState({});
+  // Per-question self-assessment for essay nodes: { [index]: { revealed, correct } }
+  const [essayGrades, setEssayGrades] = useState({});
   const [jsonInput, setJsonInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [copySuccess, setCopySuccess] = useState('');
   
   const [correctUncertainOpen, setCorrectUncertainOpen] = useState(false);
   const [isSupabaseLoaded, setIsSupabaseLoaded] = useState(false);
+  // null = not probed yet, true = essay_responses column exists, false = fall back to LocalStorage
+  const [essayColumnSupported, setEssayColumnSupported] = useState(null);
   const [uploadingImageIndex, setUploadingImageIndex] = useState(null);
   const supabaseRef = useRef(null);
 
@@ -268,6 +286,7 @@ export default function App() {
             currentQuestionIndex: p.current_question_index,
             userAnswers: p.user_answers,
             uncertainQuestions: p.uncertain_questions,
+            essayGrades: p.essay_responses || {},
             status: p.status
           };
         });
@@ -320,6 +339,37 @@ export default function App() {
     }
   }, [isSupabaseLoaded, currentUser.uid]);
 
+  // Probe for the optional `essay_responses` column.
+  // A database that has not run essay_questions_update.sql must not break progress saving,
+  // so we send the column only once PostgREST confirms it exists; otherwise essay grades
+  // are mirrored to LocalStorage instead.
+  useEffect(() => {
+    if (!isSupabaseLoaded || !supabaseRef.current) return;
+    if (essayColumnSupported !== null) return;
+
+    let cancelled = false;
+    const probeEssayColumn = async () => {
+      try {
+        const { error } = await supabaseRef.current
+          .from('user_progress')
+          .select('essay_responses')
+          .limit(1);
+        if (cancelled) return;
+        if (error) {
+          console.warn("user_progress.essay_responses unavailable; essay progress will persist to LocalStorage only.");
+          setEssayColumnSupported(false);
+        } else {
+          setEssayColumnSupported(true);
+        }
+      } catch {
+        if (!cancelled) setEssayColumnSupported(false);
+      }
+    };
+    probeEssayColumn();
+
+    return () => { cancelled = true; };
+  }, [isSupabaseLoaded, essayColumnSupported]);
+
   // Fetch Analytics Effect
   useEffect(() => {
     if (currentView === 'analytics' && isAdmin) {
@@ -357,6 +407,31 @@ export default function App() {
     }
   }, [currentView, isAdmin, isSupabaseLoaded]);
 
+  const essaySchemaNote = `
+
+ESSAY QUESTION SUPPORT:
+You may also include self-graded essay (long-answer) questions. A student answers these on
+paper, then reveals your answer and marks themselves right or wrong — so an essay question
+MUST have a complete, self-contained model answer.
+
+To emit an essay question, tag it with "type": "essay", supply "answerText", and leave
+"options" as an empty array:
+
+    {
+      "question": "Explain the difference between a mutex and a semaphore.",
+      "type": "essay",
+      "answerText": "A mutex grants exclusive ownership to exactly one thread at a time, while a semaphore is a counting resource that can permit N concurrent holders...",
+      "explanation": "Key point: mutual exclusion versus a counting token. Most students confuse ownership with concurrency here.",
+      "options": [],
+      "imageUrl": ""
+    }
+
+Rules for essay questions:
+- "answerText" is the concealed answer shown only after the student reveals it. It must stand alone.
+- "explanation" is optional examiner guidance shown alongside the answer (key points, common pitfalls).
+- Never mix the two forms: an essay question has "options": [] and no isCorrect flags.
+- Keep the same "type" key on every question of a given quiz for consistency.`;
+
   const aiPrompt = `You are acting as an expert university professor and exam designer. 
 
 I have uploaded two types of sources into this notebook:
@@ -387,7 +462,7 @@ The JSON must exactly follow this schema:
       ]
     }
   ]
-}`;
+}${essaySchemaNote}`;
 
   const aiPromptFormat = `You are acting as an expert university professor and exam designer.
 
@@ -413,7 +488,7 @@ The JSON must exactly follow this schema:
       ]
     }
   ]
-}`;
+}${essaySchemaNote}`;
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
@@ -776,11 +851,15 @@ The JSON must exactly follow this schema:
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
 
     // Throttle progress state writes strictly if spam-clicked
-    if (updatedProgress.userAnswers && !verifyRateLimit()) {
+    if ((updatedProgress.userAnswers || updatedProgress.essayGrades) && !verifyRateLimit()) {
       console.warn("Write request throttled to prevent database flooding.");
       saveLocalFallback(null, null, nextStates);
       return; 
     }
+
+    // Without the optional column we keep essay grades in the LocalStorage mirror so they
+    // still survive Save & Exit on an un-migrated database.
+    const shouldMirrorEssay = essayColumnSupported !== true;
 
     if (isSupabaseReady) {
       try {
@@ -794,23 +873,30 @@ The JSON must exactly follow this schema:
           updated_at: new Date().toISOString()
         };
 
+        if (essayColumnSupported === true) {
+          payload.essay_responses = completeRecord.essayGrades || {};
+        }
+
         const { error } = await supabaseRef.current
           .from('user_progress')
           .upsert(payload, { onConflict: 'user_id, quiz_id' });
         if (error) throw error;
+        if (shouldMirrorEssay) saveLocalFallback(null, null, nextStates);
       } catch (err) {
         console.error("Database tracker update mismatch:", err);
+        saveLocalFallback(null, null, nextStates);
       }
     } else {
       saveLocalFallback(null, null, nextStates);
     }
-  }, [quizStates, isSupabaseLoaded, currentUser, verifyRateLimit]);
+  }, [quizStates, isSupabaseLoaded, currentUser, verifyRateLimit, essayColumnSupported]);
 
   const startQuiz = useCallback((quiz) => {
     const freshState = {
       currentQuestionIndex: 0,
       userAnswers: {},
       uncertainQuestions: {},
+      essayGrades: {},
       status: 'in_progress'
     };
     
@@ -820,6 +906,7 @@ The JSON must exactly follow this schema:
     setCurrentQuestionIndex(0);
     setUserAnswers({});
     setUncertainQuestions({});
+    setEssayGrades({});
     setCurrentView('taking_quiz');
   }, [updatePersistentState]);
 
@@ -828,6 +915,7 @@ The JSON must exactly follow this schema:
       currentQuestionIndex: 0, 
       userAnswers: {}, 
       uncertainQuestions: {}, 
+      essayGrades: {},
       status: 'in_progress' 
     };
     
@@ -835,6 +923,7 @@ The JSON must exactly follow this schema:
     setCurrentQuestionIndex(savedState.currentQuestionIndex || 0);
     setUserAnswers(savedState.userAnswers || {});
     setUncertainQuestions(savedState.uncertainQuestions || {});
+    setEssayGrades(savedState.essayGrades || {});
     setCurrentView('taking_quiz');
   };
 
@@ -843,6 +932,7 @@ The JSON must exactly follow this schema:
       currentQuestionIndex: 0,
       userAnswers: {},
       uncertainQuestions: {},
+      essayGrades: {},
       status: 'in_progress'
     };
     updatePersistentState(quizId, freshState);
@@ -857,6 +947,8 @@ The JSON must exactly follow this schema:
   }, [activeQuiz, updatePersistentState]);
 
   const handleOptionSelect = useCallback((optionId) => {
+    // Essay nodes are self-graded after the model answer is revealed, never by option click.
+    if (isEssayQuestion(activeQuiz?.questions?.[currentQuestionIndex])) return;
     if (userAnswers[currentQuestionIndex] !== undefined) return;
     
     const updatedAnswers = { ...userAnswers, [currentQuestionIndex]: optionId };
@@ -880,6 +972,42 @@ The JSON must exactly follow this schema:
       uncertainQuestions: updatedUncertain
     });
   }, [uncertainQuestions, currentQuestionIndex, activeQuiz, updatePersistentState]);
+
+  // Unhide the model answer for the current essay node. The student answers on paper, so the
+  // reveal is the only moment the answer becomes visible.
+  const revealEssayAnswer = useCallback(() => {
+    const currentGrade = essayGrades[currentQuestionIndex];
+    if (currentGrade?.revealed) return;
+
+    const updatedGrades = {
+      ...essayGrades,
+      [currentQuestionIndex]: { ...currentGrade, revealed: true, correct: false }
+    };
+    setEssayGrades(updatedGrades);
+
+    updatePersistentState(activeQuiz.id, {
+      essayGrades: updatedGrades,
+      status: 'in_progress'
+    });
+  }, [essayGrades, currentQuestionIndex, activeQuiz, updatePersistentState]);
+
+  // Self-assessment after revealing. Stays changeable so a second look can correct a misclick.
+  const gradeEssayAnswer = useCallback((isCorrect) => {
+    const currentGrade = essayGrades[currentQuestionIndex];
+    if (!currentGrade?.revealed) return;
+    if (currentGrade.correct === isCorrect) return;
+
+    const updatedGrades = {
+      ...essayGrades,
+      [currentQuestionIndex]: { ...currentGrade, correct: isCorrect }
+    };
+    setEssayGrades(updatedGrades);
+
+    updatePersistentState(activeQuiz.id, {
+      essayGrades: updatedGrades,
+      status: 'in_progress'
+    });
+  }, [essayGrades, currentQuestionIndex, activeQuiz, updatePersistentState]);
 
   const handleNextQuestion = useCallback(() => {
     const nextIndex = currentQuestionIndex + 1;
@@ -1046,12 +1174,18 @@ The JSON must exactly follow this schema:
       const currentQ = activeQuiz.questions[currentQuestionIndex];
       const selectedOptId = userAnswers[currentQuestionIndex];
       const isAnswered = selectedOptId !== undefined;
+      const currentIsEssay = isEssayQuestion(currentQ);
 
-      if (!isAnswered) {
+      // Option hotkeys only apply to multiple-choice nodes. `R` reveals the essay answer.
+      if (!isAnswered && !currentIsEssay && currentQ.options) {
         if (e.key === '1' && currentQ.options[0]) handleOptionSelect(currentQ.options[0].id);
         else if (e.key === '2' && currentQ.options[1]) handleOptionSelect(currentQ.options[1].id);
         else if (e.key === '3' && currentQ.options[2]) handleOptionSelect(currentQ.options[2].id);
         else if (e.key === '4' && currentQ.options[3]) handleOptionSelect(currentQ.options[3].id);
+      }
+
+      if (currentIsEssay && (e.key === 'r' || e.key === 'R')) {
+        revealEssayAnswer();
       }
 
       if (e.key === 'c' || e.key === 'C') {
@@ -1063,7 +1197,7 @@ The JSON must exactly follow this schema:
       } else if (e.key === 'ArrowRight') {
         if (currentQuestionIndex < activeQuiz.questions.length - 1) {
           handleNextQuestion();
-        } else if (isAnswered) {
+        } else if (isAnswered || essayGrades[currentQuestionIndex]?.revealed) {
           finishQuiz();
         }
       }
@@ -1077,10 +1211,12 @@ The JSON must exactly follow this schema:
     currentQuestionIndex,
     userAnswers,
     uncertainQuestions,
+    essayGrades,
     finishQuiz,
     handleNextQuestion,
     handleOptionSelect,
     handlePrevQuestion,
+    revealEssayAnswer,
     toggleUncertainty
   ]);
 
@@ -1091,6 +1227,7 @@ The JSON must exactly follow this schema:
     setActiveQuiz(quiz);
     setUserAnswers(savedState.userAnswers || {});
     setUncertainQuestions(savedState.uncertainQuestions || {});
+    setEssayGrades(savedState.essayGrades || {});
     setCorrectUncertainOpen(false);
     setCurrentView('review');
   };
@@ -1100,6 +1237,7 @@ The JSON must exactly follow this schema:
     setCurrentQuestionIndex(0);
     setUserAnswers({});
     setUncertainQuestions({});
+    setEssayGrades({});
     setCurrentView('dashboard');
   };
 
@@ -1122,21 +1260,29 @@ The JSON must exactly follow this schema:
     const correctButUncertain = [];
 
     activeQuiz.questions.forEach((q, idx) => {
-      const ansId = userAnswers[idx];
-      const isCorrect = ansId && q.options.find(o => o.id === ansId)?.isCorrect;
+      const nodeIsEssay = isEssayQuestion(q);
       const isUncertain = uncertainQuestions[idx] === true;
+
+      // Essay nodes are correct only when the student revealed the answer and graded it right.
+      const isCorrect = nodeIsEssay
+        ? essayGrades[idx]?.revealed === true && essayGrades[idx].correct === true
+        : !!userAnswers[idx] && (q.options || []).find(o => o.id === userAnswers[idx])?.isCorrect;
+      const ansId = nodeIsEssay ? null : userAnswers[idx];
 
       if (!isCorrect) {
         incorrect.push({
           question: q,
           selectedOptionId: ansId || null,
           isUncertain,
+          isEssay: nodeIsEssay,
+          essayRevealed: nodeIsEssay ? essayGrades[idx]?.revealed === true : false,
           index: idx
         });
-      } else if (isCorrect && isUncertain) {
+      } else if (isUncertain) {
         correctButUncertain.push({
           question: q,
           selectedOptionId: ansId,
+          isEssay: nodeIsEssay,
           index: idx
         });
       }
@@ -1165,8 +1311,26 @@ The JSON must exactly follow this schema:
 
     incorrect.forEach((item, idx) => {
       const q = item.question;
-      const selectedOpt = q.options.find(o => o.id === item.selectedOptionId);
-      const correctOpt = q.options.find(o => o.isCorrect);
+
+      // Essay nodes have no options or picked choice — report the concealed model answer instead.
+      if (item.isEssay) {
+        content += `Mistake #${idx + 1} (Question #${item.index + 1}) - ESSAY\n`;
+        content += `Question: ${q.question}\n`;
+        content += `Confidence Status: ${item.isUncertain ? 'Uncertain' : 'Confident'}\n`;
+        content += `Self-Assessment: Marked Wrong\n`;
+        content += `Answer Revealed: ${item.essayRevealed ? 'Yes' : 'No (skipped without revealing)'}\n\n`;
+
+        content += `Model Answer:\n`;
+        content += `  ${q.answerText || '[No Model Answer Designated]'}\n`;
+        if (q.explanation) {
+          content += `  Examiner's Notes: ${q.explanation}\n`;
+        }
+        content += `\n-----------------------------------------\n\n`;
+        return;
+      }
+
+      const selectedOpt = (q.options || []).find(o => o.id === item.selectedOptionId);
+      const correctOpt = (q.options || []).find(o => o.isCorrect);
 
       content += `Mistake #${idx + 1} (Question #${item.index + 1}):\n`;
       content += `Question: ${q.question}\n`;
@@ -1195,7 +1359,7 @@ The JSON must exactly follow this schema:
       content += `\n`;
 
       content += `Option Analysis:\n`;
-      q.options.forEach(o => {
+      (q.options || []).forEach(o => {
         const marker = o.isCorrect 
           ? `[Correct Answer]` 
           : (o.id === item.selectedOptionId ? `[Your Choice]` : `[Option]`);
@@ -1638,8 +1802,33 @@ The JSON must exactly follow this schema:
     if (!editedQuizData) return null;
 
     const addQuestion = () => {
-      const newQ = { question: "New Question", options: [], imageUrl: "" };
+      const newQ = { question: "New Question", type: 'mcq', options: [], imageUrl: "" };
       setEditedQuizData({ ...editedQuizData, questions: [...editedQuizData.questions, newQ] });
+    };
+
+    const addEssayQuestion = () => {
+      const newQ = {
+        question: "New Essay Question",
+        type: 'essay',
+        answerText: "",
+        explanation: "",
+        options: [],
+        imageUrl: ""
+      };
+      setEditedQuizData({ ...editedQuizData, questions: [...editedQuizData.questions, newQ] });
+    };
+
+    // Flip a question between multiple-choice and essay. Switching to mcq seeds blank options
+    // so the existing option editor stays usable; switching to essay clears them.
+    const toggleQuestionType = (qIdx) => {
+      const qs = [...editedQuizData.questions];
+      const q = qs[qIdx];
+      if (isEssayQuestion(q)) {
+        qs[qIdx] = { ...q, type: 'mcq', answerText: '', options: q.options || [] };
+      } else {
+        qs[qIdx] = { ...q, type: 'essay', options: [] };
+      }
+      setEditedQuizData({ ...editedQuizData, questions: qs });
     };
 
     const deleteQuestion = (qIdx) => {
@@ -1718,12 +1907,21 @@ The JSON must exactly follow this schema:
               <h3 className="font-serif font-bold text-lg text-slate-800 dark:text-slate-200 flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-[#C5A059]" /> Questions ({editedQuizData.questions.length})
               </h3>
-              <button 
-                onClick={addQuestion}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#C5A059]/10 text-[#C5A059] hover:bg-[#C5A059]/20 rounded-lg text-xs font-bold transition-all"
-              >
-                <PlusCircle className="w-4 h-4" /> Add Question
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button 
+                  onClick={addQuestion}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#C5A059]/10 text-[#C5A059] hover:bg-[#C5A059]/20 rounded-lg text-xs font-bold transition-all"
+                >
+                  <PlusCircle className="w-4 h-4" /> Add Question
+                </button>
+                <button 
+                  onClick={addEssayQuestion}
+                  title="Add a self-graded essay question with a concealed model answer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 rounded-lg text-xs font-bold transition-all"
+                >
+                  <PenLine className="w-4 h-4" /> Add Essay Question
+                </button>
+              </div>
             </div>
 
             <div className="space-y-6">
@@ -1738,7 +1936,23 @@ The JSON must exactly follow this schema:
                   </button>
 
                   <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 font-mono">Question {qIdx + 1} Text</label>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono">
+                        Question {qIdx + 1} Text
+                      </label>
+                      <button
+                        onClick={() => toggleQuestionType(qIdx)}
+                        title={isEssayQuestion(q) ? 'Convert to a multiple-choice question' : 'Convert to a self-graded essay question'}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all font-mono ${
+                          isEssayQuestion(q)
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                            : 'bg-[#C5A059]/10 text-[#C5A059] border-[#C5A059]/30 hover:bg-[#C5A059]/20'
+                        }`}
+                      >
+                        {isEssayQuestion(q) ? <PenLine className="w-3 h-3" /> : <BookOpenCheck className="w-3 h-3" />}
+                        {isEssayQuestion(q) ? 'Essay' : 'Multiple Choice'}
+                      </button>
+                    </div>
                     <textarea 
                       value={q.question}
                       onChange={(e) => {
@@ -1806,6 +2020,47 @@ The JSON must exactly follow this schema:
                     )}
                   </div>
 
+                  {isEssayQuestion(q) ? (
+                    <div className="space-y-3 pt-2">
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-emerald-500 mb-1.5 font-mono flex items-center gap-1.5">
+                          <EyeOff className="w-3.5 h-3.5" /> Concealed Model Answer
+                        </label>
+                        <textarea
+                          value={q.answerText || ''}
+                          onChange={(e) => {
+                            const qs = [...editedQuizData.questions];
+                            qs[qIdx].answerText = e.target.value;
+                            setEditedQuizData({ ...editedQuizData, questions: qs });
+                          }}
+                          placeholder="The answer the student will see only after revealing it. Keep it self-contained."
+                          className="w-full px-4 py-3 border border-emerald-500/30 rounded-xl bg-emerald-500/5 dark:bg-slate-950/40 focus:outline-none focus:border-emerald-500 text-sm font-medium leading-relaxed"
+                          rows="4"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] mb-1.5 font-mono flex items-center gap-1.5">
+                          <Lightbulb className="w-3.5 h-3.5" /> Examiner's Notes (Optional)
+                        </label>
+                        <textarea
+                          value={q.explanation || ''}
+                          onChange={(e) => {
+                            const qs = [...editedQuizData.questions];
+                            qs[qIdx].explanation = e.target.value;
+                            setEditedQuizData({ ...editedQuizData, questions: qs });
+                          }}
+                          placeholder="Extra guidance shown after the answer is revealed — key points to include, common pitfalls."
+                          className="w-full px-4 py-2 border border-[#C5A059]/20 rounded-xl bg-white/20 dark:bg-slate-950/40 focus:outline-none focus:border-[#D4AF37] text-xs font-medium leading-relaxed"
+                          rows="3"
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 italic leading-relaxed">
+                        Students never type a response. They solve the question, reveal this answer,
+                        then mark themselves right or wrong. Both options stay clickable so a verdict
+                        can be changed.
+                      </p>
+                    </div>
+                  ) : (
                   <div className="space-y-3 pt-2">
                     <div className="flex items-center justify-between">
                       <label className="block text-xs font-bold uppercase tracking-wider text-[#C5A059] font-mono">Options & Explanations</label>
@@ -1873,12 +2128,13 @@ The JSON must exactly follow this schema:
                       </div>
                     ))}
                   </div>
+                  )}
                 </div>
               ))}
               
               {editedQuizData.questions.length === 0 && (
                 <div className="text-center p-8 border border-dashed border-[#C5A059]/30 rounded-xl text-slate-500">
-                  <p>No questions yet. Click "Add Question" to start building your assessment.</p>
+                  <p>No questions yet. Click "Add Question" or "Add Essay Question" to start building your assessment.</p>
                 </div>
               )}
             </div>
@@ -2086,6 +2342,10 @@ The JSON must exactly follow this schema:
     const selectedOptId = userAnswers[currentQuestionIndex];
     const isAnswered = selectedOptId !== undefined;
     const isUncertain = uncertainQuestions[currentQuestionIndex] === true;
+    const currentIsEssay = isEssayQuestion(currentQ);
+    const currentEssayGrade = essayGrades[currentQuestionIndex];
+    const isEssayRevealed = currentIsEssay && !!currentEssayGrade?.revealed;
+    const isEssayGraded = isEssayRevealed && currentEssayGrade.correct === true;
 
     // Calculate fluid progress percentages
     const progressPercent = Math.round(((currentQuestionIndex + 1) / activeQuiz.questions.length) * 100);
@@ -2147,9 +2407,14 @@ The JSON must exactly follow this schema:
           {/* Grid of Jump Targets */}
           <div className="flex gap-2 overflow-x-auto mb-8 pb-3.5 custom-scrollbar">
             {activeQuiz.questions.map((q, idx) => {
+              const nodeIsEssay = isEssayQuestion(q);
+              const nodeGrade = essayGrades[idx];
               const ansId = userAnswers[idx];
-              const hasAnswered = ansId !== undefined;
-              const isCorrect = hasAnswered && q.options.find(o => o.id === ansId)?.isCorrect;
+              // An essay node is "answered" once the model answer has been revealed.
+              const hasAnswered = nodeIsEssay ? !!nodeGrade?.revealed : ansId !== undefined;
+              const isCorrect = nodeIsEssay
+                ? nodeGrade?.revealed && nodeGrade.correct === true
+                : (hasAnswered && (q.options || []).find(o => o.id === ansId)?.isCorrect);
               const isCurrent = currentQuestionIndex === idx;
               const qUncertain = uncertainQuestions[idx] === true;
 
@@ -2189,10 +2454,13 @@ The JSON must exactly follow this schema:
                 <button
                   key={idx}
                   onClick={() => handleJumpToQuestion(idx)}
-                  className={`shrink-0 w-11 h-11 flex items-center justify-center rounded-xl border text-sm cursor-pointer transition-all duration-300 ${borderClass} ${bgClass} ${textClass} ${activeIndicator}`}
-                  title={`Question ${idx + 1}`}
+                  className={`shrink-0 w-11 h-11 flex items-center justify-center rounded-xl border text-sm cursor-pointer transition-all duration-300 relative ${borderClass} ${bgClass} ${textClass} ${activeIndicator}`}
+                  title={`Question ${idx + 1}${nodeIsEssay ? ' (Essay — self-graded)' : ''}`}
                 >
                   {idx + 1}
+                  {nodeIsEssay && (
+                    <PenLine className="absolute bottom-1 right-1 w-2.5 h-2.5 opacity-70" />
+                  )}
                 </button>
               );
             })}
@@ -2201,9 +2469,28 @@ The JSON must exactly follow this schema:
           {/* Interactive Card containing questions and options */}
           <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-10 shadow-lg relative overflow-hidden backdrop-blur-md">
             <div className="flex justify-between items-start gap-4 mb-8">
-              <h3 className="text-xl md:text-2xl dark:text-slate-100 text-slate-800 font-serif leading-relaxed font-bold">
-                {currentQ.question}
-              </h3>
+              <div className="flex-grow">
+                {currentIsEssay && (
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-[#C5A059]/10 text-[#D4AF37] border border-[#C5A059]/25 font-mono">
+                      <PenLine className="w-3.5 h-3.5" /> Essay Question
+                    </span>
+                    {isEssayRevealed && (
+                      <span className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg border font-mono ${
+                        isEssayGraded
+                          ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/25'
+                          : 'bg-rose-500/10 text-rose-500 border-rose-500/25'
+                      }`}>
+                        {isEssayGraded ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+                        {isEssayGraded ? 'You Had It Right' : 'Marked Wrong'}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <h3 className="text-xl md:text-2xl dark:text-slate-100 text-slate-800 font-serif leading-relaxed font-bold">
+                  {currentQ.question}
+                </h3>
+              </div>
               <button
                 onClick={() => setShowReportModal(true)}
                 className="shrink-0 p-2.5 rounded-xl text-rose-500 bg-rose-500/5 hover:bg-rose-500/15 border border-rose-500/20 hover:border-rose-500/40 transition-all duration-300 shadow-sm"
@@ -2223,9 +2510,96 @@ The JSON must exactly follow this schema:
               </div>
             )}
 
+            {/* Essay nodes: the model answer stays hidden until the student commits to a response,
+                then they self-assess their own written answer. */}
+            {currentIsEssay ? (
+              <div className="space-y-5">
+                {!isEssayRevealed ? (
+                  <div className="p-8 rounded-xl border-2 border-dashed border-[#C5A059]/30 bg-[#C5A059]/5 text-center animate-fade-in">
+                    <EyeOff className="w-10 h-10 mx-auto text-[#C5A059] opacity-60 mb-4" />
+                    <h4 className="font-serif text-lg dark:text-slate-200 text-slate-800 font-bold mb-2">
+                      The answer is concealed
+                    </h4>
+                    <p className="text-sm dark:text-slate-400 text-slate-600 leading-relaxed font-medium max-w-lg mx-auto mb-6">
+                      Write your answer out on paper first, then reveal the model answer and judge
+                      your own work. There is nothing to type here — revealing locks your verdict in.
+                    </p>
+                    <button
+                      onClick={revealEssayAnswer}
+                      className="inline-flex items-center justify-center gap-2 px-7 py-3 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-xl transition-all duration-300 shadow-md shadow-[#D4AF37]/15 font-bold text-sm"
+                    >
+                      <Eye className="w-4 h-4" /> Show Me the Answer
+                    </button>
+                  </div>
+                ) : (
+                  <div className="animate-fade-in space-y-5">
+                    <div className={`p-5 rounded-xl border-l-4 shadow-sm ${
+                      isEssayGraded
+                        ? 'bg-emerald-500/5 border-emerald-500'
+                        : 'bg-rose-500/5 border-rose-500'
+                    }`}>
+                      <span className={`font-bold uppercase tracking-wider text-xs block mb-2 font-mono ${
+                        isEssayGraded
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}>
+                        Model Answer
+                      </span>
+                      <span className="block dark:text-slate-200 text-slate-800 leading-relaxed font-sans font-medium whitespace-pre-wrap">
+                        {currentQ.answerText}
+                      </span>
+                    </div>
+
+                    {currentQ.explanation && (
+                      <div className="p-5 rounded-xl border-l-4 border-[#D4AF37] bg-[#C5A059]/5 shadow-sm">
+                        <span className="font-bold uppercase tracking-wider text-xs block mb-2 font-mono text-[#D4AF37]">
+                          <Lightbulb className="w-3.5 h-3.5 inline mr-1.5 -mt-0.5" />
+                          Examiner's Notes
+                        </span>
+                        <span className="block dark:text-slate-300 text-slate-700 leading-relaxed font-sans font-medium whitespace-pre-wrap">
+                          {currentQ.explanation}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="text-center">
+                      <p className="text-xs uppercase tracking-widest text-slate-400 font-bold mb-3 font-mono">
+                        Did you answer correctly?
+                      </p>
+                      <div className="flex flex-col sm:flex-row justify-center items-center gap-3">
+                        <button
+                          onClick={() => gradeEssayAnswer(true)}
+                          className={`w-full sm:w-auto flex items-center justify-center gap-2 px-7 py-3 rounded-xl border transition-all duration-300 font-bold text-sm ${
+                            isEssayGraded
+                              ? 'bg-emerald-500/20 border-emerald-500 text-emerald-600 dark:text-emerald-300 shadow-md'
+                              : 'border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-emerald-500/10 hover:border-emerald-500/60'
+                          }`}
+                        >
+                          <Check className="w-5 h-5" /> I Got It Right
+                        </button>
+                        <button
+                          onClick={() => gradeEssayAnswer(false)}
+                          className={`w-full sm:w-auto flex items-center justify-center gap-2 px-7 py-3 rounded-xl border transition-all duration-300 font-bold text-sm ${
+                            isEssayRevealed && !isEssayGraded
+                              ? 'bg-rose-500/20 border-rose-500 text-rose-600 dark:text-rose-300 shadow-md'
+                              : 'border-[#C5A059]/30 dark:text-slate-300 text-slate-700 hover:bg-rose-500/10 hover:border-rose-500/60'
+                          }`}
+                        >
+                          <X className="w-5 h-5" /> I Got It Wrong
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-3 font-semibold italic">
+                        You can change your verdict at any time before finishing.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
             {/* Resolving low-contrast styling issues dynamically from image_870832.png */}
             <div className="space-y-4">
-              {currentQ.options.map((option, idx) => {
+              {(currentQ.options || []).map((option, idx) => {
                 const isSelected = selectedOptId === option.id;
                 const isCorrectOption = option.isCorrect;
                 
@@ -2286,6 +2660,8 @@ The JSON must exactly follow this schema:
                 );
               })}
             </div>
+              </>
+            )}
 
             {/* Pagination / Navigation Controllers */}
             <div className="mt-10 flex flex-col-reverse sm:flex-row justify-between items-center border-t border-[#C5A059]/20 pt-6 gap-4">
@@ -2326,18 +2702,37 @@ The JSON must exactly follow this schema:
                 <Keyboard className="w-4 h-4" />
                 <span>HOTKEYS ACTIVE:</span>
               </div>
-              <div className="flex items-center gap-1.5 font-mono">
-                <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">1 - 4</span>
-                <span>Select Response</span>
-              </div>
-              <div className="flex items-center gap-1.5 font-mono">
-                <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">C</span>
-                <span>Uncertainty Toggler</span>
-              </div>
-              <div className="flex items-center gap-1.5 font-mono">
-                <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
-                <span>Slide Navigate</span>
-              </div>
+              {currentIsEssay ? (
+                <>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">R</span>
+                    <span>Reveal Answer</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">C</span>
+                    <span>Uncertainty Toggler</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
+                    <span>Slide Navigate</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">1 - 4</span>
+                    <span>Select Response</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">C</span>
+                    <span>Uncertainty Toggler</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
+                    <span>Slide Navigate</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -2382,8 +2777,73 @@ The JSON must exactly follow this schema:
               </h3>
               {incorrect.map((item, idx) => {
                 const q = item.question;
-                const selectedOpt = q.options.find(o => o.id === item.selectedOptionId);
-                const correctOpt = q.options.find(o => o.isCorrect);
+                const selectedOpt = (q.options || []).find(o => o.id === item.selectedOptionId);
+                const correctOpt = (q.options || []).find(o => o.isCorrect);
+
+                // Essay mistakes show the concealed model answer and the student's own verdict.
+                if (item.isEssay) {
+                  return (
+                    <div key={idx} className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 p-6 rounded-2xl relative overflow-hidden shadow-sm backdrop-blur-md">
+                      <div className={`absolute top-0 left-0 w-1.5 h-full ${item.isUncertain ? 'bg-amber-500' : 'bg-rose-500'}`}></div>
+
+                      <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-5 pl-2">
+                        <div className="flex-grow">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-[#C5A059]/10 text-[#D4AF37] border border-[#C5A059]/20 font-mono">
+                              <PenLine className="w-3.5 h-3.5" /> Essay Question
+                            </span>
+                          </div>
+                          <h4 className="text-lg dark:text-slate-100 text-slate-800 font-serif leading-relaxed font-bold">{q.question}</h4>
+                        </div>
+
+                        <div className="shrink-0 font-mono">
+                          {item.isUncertain ? (
+                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-sm">
+                              <AlertTriangle className="w-3.5 h-3.5" /> Uncertain / Incorrect
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-rose-500 border border-rose-500/20 shadow-sm">
+                              <ShieldAlert className="w-3.5 h-3.5" /> Confident / Incorrect
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="bg-rose-500/5 border border-rose-500/10 p-4 rounded-xl pl-2">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-rose-500 block mb-2 font-mono">Your Self-Assessment</span>
+                        {item.essayRevealed ? (
+                          <>
+                            <p className="dark:text-slate-200 text-slate-800 mb-2 font-bold text-sm flex items-center gap-2">
+                              <X className="w-4 h-4 text-rose-500" /> Marked as Wrong
+                            </p>
+                            <p className="text-xs text-rose-700 dark:text-rose-300 leading-relaxed font-medium">
+                              You revealed the model answer and judged your own written response incorrect. Re-read the notes below, write it out again, and try to reproduce it from memory.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="dark:text-slate-500 text-slate-450 italic text-xs font-semibold">Skipped Response Node</p>
+                            <p className="text-xs text-rose-700 dark:text-rose-300 leading-relaxed font-medium mt-2">
+                              You moved past this question without revealing the model answer. Read the answer below and attempt it fresh.
+                            </p>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="bg-emerald-500/5 border border-emerald-500/10 p-4 rounded-xl mt-4 pl-2">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-500 block mb-2 font-mono">Model Answer</span>
+                        <p className="dark:text-slate-200 text-slate-800 mb-2 font-semibold text-sm leading-relaxed whitespace-pre-wrap">
+                          {q.answerText || 'No model answer was designated for this question.'}
+                        </p>
+                        {q.explanation && (
+                          <p className="text-xs text-emerald-700 dark:text-emerald-300 leading-relaxed font-medium whitespace-pre-wrap">
+                            {q.explanation}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
 
                 return (
                   <div key={idx} className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 p-6 rounded-2xl relative overflow-hidden shadow-sm backdrop-blur-md">
@@ -2428,7 +2888,7 @@ The JSON must exactly follow this schema:
                     <div className="mt-4 pt-4 border-t border-[#C5A059]/20 pl-2">
                       <span className="text-[10px] font-bold uppercase tracking-widest text-slate-550 dark:text-slate-400 block mb-3 font-mono font-sans">All Options Reference</span>
                       <div className="space-y-3">
-                        {q.options.map(opt => {
+                        {(q.options || []).map(opt => {
                           const isChosen = opt.id === item.selectedOptionId;
                           const isCorrect = opt.isCorrect;
                           
@@ -2510,7 +2970,29 @@ The JSON must exactly follow this schema:
                     
                     {correctButUncertain.map((item, idx) => {
                       const q = item.question;
-                      const correctOpt = q.options.find(o => o.isCorrect);
+
+                      if (item.isEssay) {
+                        return (
+                          <div key={idx} className="border-l-4 border-amber-500 pl-4 py-1">
+                            <div className="flex items-center gap-2 mb-2 text-[10px] font-bold text-slate-450 uppercase tracking-widest font-mono">
+                              <span>Question {item.index + 1}</span>
+                              <span className="flex items-center gap-1 text-[#C5A059]">
+                                <PenLine className="w-3 h-3" /> Essay
+                              </span>
+                            </div>
+                            <h5 className="font-serif dark:text-slate-200 text-slate-800 text-md mb-2 font-bold">{q.question}</h5>
+                            <p className="text-xs text-emerald-500 font-bold mb-2 font-mono uppercase tracking-wider flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5" /> Self-Assessed as Correct
+                            </p>
+                            <div className="text-xs dark:text-slate-300 text-slate-700 bg-white/20 dark:bg-slate-950/40 p-4 rounded-xl border border-[#C5A059]/20 mt-2 font-medium whitespace-pre-wrap">
+                              <strong className="block text-[#D4AF37] text-[10px] uppercase tracking-widest mb-1.5 font-mono">Your Model Answer:</strong>
+                              {q.answerText}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const correctOpt = (q.options || []).find(o => o.isCorrect);
 
                       return (
                         <div key={idx} className="border-l-4 border-amber-500 pl-4 py-1">
