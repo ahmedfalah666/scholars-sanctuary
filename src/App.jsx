@@ -68,6 +68,35 @@ const isEssayQuestion = (q) => {
   return !q.type && !!q.answerText && (!q.options || q.options.length === 0);
 };
 
+// Deleting a folder takes its whole subtree with it, so collect the folder plus every
+// descendant folder and every assessment inside them. Deleting one level only (the old
+// behaviour) left children behind with a dangling parent_id.
+const collectSubtree = (rootId, allGroups, allQuizzes) => {
+  const folderIds = new Set([Number(rootId)]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    allGroups.forEach(g => {
+      const parent = g.parent_id === null || g.parent_id === undefined ? null : Number(g.parent_id);
+      const id = Number(g.id);
+      if (!folderIds.has(id) && parent !== null && folderIds.has(parent)) {
+        folderIds.add(id);
+        grew = true;
+      }
+    });
+  }
+
+  const root = allGroups.find(g => Number(g.id) === Number(rootId));
+
+  return {
+    folders: allGroups.filter(g => folderIds.has(Number(g.id))),
+    quizzes: allQuizzes.filter(q => folderIds.has(Number(q.group_id))),
+    label: root ? root.name : 'Unknown Folder'
+  };
+};
+
+const makeTrashLabel = (item) => item.label || 'Untitled item';
+
 export default function App() {
   const [theme, setTheme] = useState(() => {
     const savedTheme = localStorage.getItem('academicTheme');
@@ -150,6 +179,11 @@ export default function App() {
   const [reports, setReports] = useState([]);
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportReason, setReportReason] = useState('');
+
+  // Admin-only recycle bin. Each entry is a self-contained bundle so a restore never
+  // depends on the trash still being in sync with the live tables.
+  const [trashItems, setTrashItems] = useState([]);
+  const [trashColumnSupported, setTrashColumnSupported] = useState(null);
 
   const [currentUser] = useState(() => {
     let savedUid = localStorage.getItem('sanctuaryUserId');
@@ -242,12 +276,14 @@ export default function App() {
     const localStates = localStorage.getItem('sanctuaryQuizStates');
     const localMsgs = localStorage.getItem('sanctuaryInbox');
     const localReports = localStorage.getItem('sanctuaryReports');
+    const localTrash = localStorage.getItem('sanctuaryTrash');
 
     if (localQuizzes) setQuizzes(JSON.parse(localQuizzes));
     if (localGroups) setGroups(JSON.parse(localGroups));
     if (localStates) setQuizStates(JSON.parse(localStates));
     if (localMsgs) setInboxMessages(JSON.parse(localMsgs));
     if (localReports) setReports(JSON.parse(localReports));
+    if (localTrash) setTrashItems(JSON.parse(localTrash));
   }, []);
 
   const loadData = useCallback(async () => {
@@ -307,10 +343,11 @@ export default function App() {
 
 
 
-  const saveLocalFallback = (updatedQuizzes, updatedGroups, updatedStates) => {
+  const saveLocalFallback = (updatedQuizzes, updatedGroups, updatedStates, updatedTrash) => {
     if (updatedQuizzes) localStorage.setItem('sanctuaryQuizzes', JSON.stringify(updatedQuizzes));
     if (updatedGroups) localStorage.setItem('sanctuaryGroups', JSON.stringify(updatedGroups));
     if (updatedStates) localStorage.setItem('sanctuaryQuizStates', JSON.stringify(updatedStates));
+    if (updatedTrash) localStorage.setItem('sanctuaryTrash', JSON.stringify(updatedTrash));
   };
 
   useEffect(() => {
@@ -369,6 +406,62 @@ export default function App() {
 
     return () => { cancelled = true; };
   }, [isSupabaseLoaded, essayColumnSupported]);
+
+  // Probe for the optional `trash_items` table. Without it, deletions fall back to an
+  // immediate hard delete so behaviour matches the pre-trash app rather than silently
+  // losing data.
+  useEffect(() => {
+    if (!isSupabaseLoaded || !supabaseRef.current) return;
+    if (trashColumnSupported !== null) return;
+
+    let cancelled = false;
+    const probeTrashTable = async () => {
+      try {
+        const { error } = await supabaseRef.current
+          .from('trash_items')
+          .select('id')
+          .limit(1);
+        if (cancelled) return;
+        if (error) {
+          console.warn("trash_items table unavailable; deletions will be permanent.");
+          setTrashColumnSupported(false);
+        } else {
+          setTrashColumnSupported(true);
+        }
+      } catch {
+        if (!cancelled) setTrashColumnSupported(false);
+      }
+    };
+    probeTrashTable();
+
+    return () => { cancelled = true; };
+  }, [isSupabaseLoaded, trashColumnSupported]);
+
+  // Load the trash once the table is confirmed present.
+  useEffect(() => {
+    if (trashColumnSupported !== true) return;
+    if (!supabaseRef.current) return;
+
+    let cancelled = false;
+    const loadTrash = async () => {
+      try {
+        const { data, error } = await supabaseRef.current
+          .from('trash_items')
+          .select('*')
+          .order('deleted_at', { ascending: false });
+        if (cancelled) return;
+        if (error) throw error;
+        setTrashItems(data || []);
+      } catch (err) {
+        console.error("Failed to load trash:", err);
+        const localTrash = localStorage.getItem('sanctuaryTrash');
+        if (!cancelled && localTrash) setTrashItems(JSON.parse(localTrash));
+      }
+    };
+    loadTrash();
+
+    return () => { cancelled = true; };
+  }, [trashColumnSupported]);
 
   // Fetch Analytics Effect
   useEffect(() => {
@@ -551,9 +644,71 @@ The JSON must exactly follow this schema:
     setEditGroupName('');
   };
 
+  // Soft-delete a folder: capture the folder plus its entire subtree into the trash, then
+  // remove it from the live tables. Nothing is destroyed, so a mis-click is reversible.
   const handleDeleteGroup = useCallback(async (gId) => {
     if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    // Without the trash table there is nowhere to recover to, so fall back to a hard delete.
+    const useTrash = !isSupabaseReady || trashColumnSupported === true;
+
+    const subtree = collectSubtree(gId, groups, quizzes);
+    if (subtree.folders.length === 0) return;
+
+    if (useTrash) {
+      const entry = {
+        id: 'trash_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
+        kind: 'folder',
+        label: subtree.label,
+        deleted_at: new Date().toISOString(),
+        payload: { folders: subtree.folders, quizzes: subtree.quizzes }
+      };
+
+      const nextTrash = [entry, ...trashItems];
+      setTrashItems(nextTrash);
+      saveLocalFallback(null, null, null, nextTrash);
+
+      if (isSupabaseReady && trashColumnSupported === true) {
+        try {
+          const { error } = await supabaseRef.current
+            .from('trash_items')
+            .insert([{
+              id: entry.id,
+              kind: entry.kind,
+              label: entry.label,
+              deleted_at: entry.deleted_at,
+              payload: entry.payload
+            }]);
+          if (error) throw error;
+        } catch (err) {
+          console.error("Failed to record folder in trash:", err);
+        }
+      }
+
+      const folderIdSet = new Set(subtree.folders.map(f => f.id));
+      const updatedGroups = groups.filter(g => !folderIdSet.has(g.id));
+      const updatedQuizzes = quizzes.filter(q => !folderIdSet.has(q.group_id));
+      setGroups(updatedGroups);
+      setQuizzes(updatedQuizzes);
+      saveLocalFallback(updatedQuizzes, updatedGroups, null, nextTrash);
+
+      if (isSupabaseReady) {
+        try {
+          const folderIds = subtree.folders.map(f => f.id);
+          if (folderIds.length) {
+            await supabaseRef.current.from('groups').delete().in('id', folderIds);
+          }
+          if (subtree.quizzes.length) {
+            await supabaseRef.current.from('quizzes').delete().in('id', subtree.quizzes.map(q => q.id));
+          }
+        } catch (err) {
+          console.error("Cloud folder removal failed:", err);
+        }
+      }
+      return;
+    }
+
+    // Hard delete (trash table unavailable).
     if (isSupabaseReady) {
       try {
         const { error } = await supabaseRef.current
@@ -573,7 +728,108 @@ The JSON must exactly follow this schema:
       setQuizzes(updatedQuizzes);
       saveLocalFallback(updatedQuizzes, updated, null);
     }
-  }, [isSupabaseLoaded, groups, quizzes, verifyRateLimit]);
+  }, [isSupabaseLoaded, groups, quizzes, trashItems, trashColumnSupported, verifyRateLimit]);
+
+  // Put a trashed entry back where it came from, re-inserting ids so any folder structure
+  // and quiz references inside the bundle survive intact.
+  const restoreFromTrash = useCallback(async (entryId) => {
+    const entry = trashItems.find(t => t.id === entryId);
+    if (!entry) return;
+    if (!verifyRateLimit()) return;
+
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    const cloudBacked = isSupabaseReady && trashColumnSupported === true;
+    const folders = entry.payload?.folders || [];
+    const trashedQuizzes = entry.payload?.quizzes || [];
+
+    // Drop the bin entry first so a failure below cannot leave a duplicate.
+    const nextTrash = trashItems.filter(t => t.id !== entryId);
+    setTrashItems(nextTrash);
+    saveLocalFallback(null, null, null, nextTrash);
+    if (cloudBacked) {
+      try {
+        const { error } = await supabaseRef.current
+          .from('trash_items')
+          .delete()
+          .eq('id', entryId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to remove trash record:", err);
+      }
+    }
+
+    // Only restore folders whose parent is either already live or part of this same bundle,
+    // otherwise a restore would rebuild a subtree hanging off a missing parent.
+    const bundleGroupIds = new Set(folders.map(f => Number(f.id)));
+    const liveGroupIds = new Set(groups.map(g => Number(g.id)));
+    const restorableFolders = folders.filter(f => {
+      if (f.parent_id === null || f.parent_id === undefined) return true;
+      const parent = Number(f.parent_id);
+      return liveGroupIds.has(parent) || bundleGroupIds.has(parent);
+    });
+
+    const restorableQuizIds = new Set(restorableFolders.map(f => Number(f.id)));
+    const restorableQuizzes = trashedQuizzes.filter(q => {
+      if (q.group_id === null || q.group_id === undefined) return true;
+      return restorableQuizIds.has(Number(q.group_id));
+    });
+
+    const updatedGroups = [...groups, ...restorableFolders];
+    const updatedQuizzes = [...quizzes, ...restorableQuizzes];
+    setGroups(updatedGroups);
+    setQuizzes(updatedQuizzes);
+    saveLocalFallback(updatedQuizzes, updatedGroups, null, nextTrash);
+
+    if (cloudBacked) {
+      try {
+        if (restorableFolders.length) {
+          const { error } = await supabaseRef.current.from('groups').insert(restorableFolders);
+          if (error) throw error;
+        }
+        if (restorableQuizzes.length) {
+          const { error } = await supabaseRef.current.from('quizzes').insert(restorableQuizzes);
+          if (error) throw error;
+        }
+      } catch (err) {
+        console.error("Failed to restore to cloud:", err);
+      }
+    }
+  }, [isSupabaseLoaded, groups, quizzes, trashItems, trashColumnSupported, verifyRateLimit]);
+
+  // Irreversible: drop one entry and destroy the underlying rows for good.
+  const purgeTrashItem = useCallback(async (entryId) => {
+    const entry = trashItems.find(t => t.id === entryId);
+    if (!entry) return;
+    if (!verifyRateLimit()) return;
+
+    const nextTrash = trashItems.filter(t => t.id !== entryId);
+    setTrashItems(nextTrash);
+    saveLocalFallback(null, null, null, nextTrash);
+
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    if (!isSupabaseReady) return;
+    try {
+      await supabaseRef.current.from('trash_items').delete().eq('id', entryId);
+    } catch (err) {
+      console.error("Failed to purge trash record:", err);
+    }
+  }, [isSupabaseLoaded, trashItems, verifyRateLimit]);
+
+  // Clear the whole bin in one shot. The live tables were already updated when the items
+  // were moved here, so this only has to discard the stored bundles.
+  const emptyTrash = useCallback(async () => {
+    if (!verifyRateLimit()) return;
+    setTrashItems([]);
+    saveLocalFallback(null, null, null, []);
+
+    if (!isSupabaseLoaded || !supabaseRef.current) return;
+    try {
+      const { error } = await supabaseRef.current.from('trash_items').delete().neq('id', '');
+      if (error) throw error;
+    } catch (err) {
+      console.error("Failed to empty trash:", err);
+    }
+  }, [isSupabaseLoaded, verifyRateLimit]);
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
@@ -814,6 +1070,61 @@ The JSON must exactly follow this schema:
   const deleteQuiz = useCallback(async (id) => {
     if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    const useTrash = !isSupabaseReady || trashColumnSupported === true;
+    const target = quizzes.find(q => q.id === id);
+    if (!target) return;
+
+    if (useTrash) {
+      const entry = {
+        id: 'trash_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
+        kind: 'quiz',
+        label: target.quiz_title || 'Untitled Assessment',
+        deleted_at: new Date().toISOString(),
+        payload: { folders: [], quizzes: [target] }
+      };
+
+      const nextTrash = [entry, ...trashItems];
+      setTrashItems(nextTrash);
+      saveLocalFallback(null, null, null, nextTrash);
+
+      if (isSupabaseReady && trashColumnSupported === true) {
+        try {
+          const { error } = await supabaseRef.current
+            .from('trash_items')
+            .insert([{
+              id: entry.id,
+              kind: entry.kind,
+              label: entry.label,
+              deleted_at: entry.deleted_at,
+              payload: entry.payload
+            }]);
+          if (error) throw error;
+        } catch (err) {
+          console.error("Failed to record assessment in trash:", err);
+        }
+      }
+
+      const updatedQuizzes = quizzes.filter(q => q.id !== id);
+      setQuizzes(updatedQuizzes);
+      saveLocalFallback(updatedQuizzes, null, null, nextTrash);
+
+      if (isSupabaseReady) {
+        try {
+          const { error } = await supabaseRef.current
+            .from('quizzes')
+            .delete()
+            .eq('id', id);
+          if (error) throw error;
+        } catch (err) {
+          console.error("Cloud assessment removal failed:", err);
+        }
+      }
+
+      // Keep the student's progress so a restore brings back the attempt history too.
+      return;
+    }
+
+    // Hard delete (trash table unavailable).
     if (isSupabaseReady) {
       try {
         const { error } = await supabaseRef.current
@@ -835,7 +1146,7 @@ The JSON must exactly follow this schema:
       setQuizStates(newStates);
       saveLocalFallback(null, null, newStates);
     }
-  }, [isSupabaseLoaded, quizzes, quizStates, verifyRateLimit]);
+  }, [isSupabaseLoaded, quizzes, quizStates, trashItems, trashColumnSupported, verifyRateLimit]);
 
   const updatePersistentState = useCallback(async (quizId, updatedProgress) => {
     const nextStates = {
@@ -1479,6 +1790,13 @@ The JSON must exactly follow this schema:
                   <BarChart2 className="w-4 h-4" /> Analytics
                 </button>
                 <button 
+                  onClick={() => setCurrentView('trash')}
+                  title="Restore deleted folders and assessments"
+                  className="flex items-center gap-2 px-4 py-2 border border-slate-400/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md text-slate-500 dark:text-slate-400 hover:bg-slate-500/10 hover:text-slate-700 dark:hover:text-slate-200 transition-all duration-300 rounded-lg text-sm font-semibold"
+                >
+                  <Trash2 className="w-4 h-4" /> Trash ({trashItems.length})
+                </button>
+                <button 
                   onClick={handleCreateBlankQuiz}
                   className="flex items-center gap-2 px-4 py-2 border border-[#C5A059]/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md dark:text-[#D4AF37] text-slate-700 hover:bg-[#C5A059]/10 transition-all duration-300 rounded-lg text-sm font-semibold"
                 >
@@ -1627,7 +1945,7 @@ The JSON must exactly follow this schema:
                           e.stopPropagation();
                           showConfirm(
                             "Delete Folder",
-                            `Are you sure you want to delete the folder "${grp.name}"? This deletes all subfolders and quizzes inside.`,
+                            `Move the folder "${grp.name}" and everything inside it to the trash? You can restore the whole folder later from the Trash.`,
                             () => handleDeleteGroup(grp.id)
                           );
                         }}
@@ -1699,11 +2017,11 @@ The JSON must exactly follow this schema:
                             </button>
                             <button onClick={(e) => {
                               e.stopPropagation();
-                              showConfirm(
-                                "Delete Assessment",
-                                `Are you sure you want to permanently delete "${quiz.quiz_title}"?`,
-                                () => deleteQuiz(quiz.id)
-                              );
+                          showConfirm(
+                            "Delete Assessment",
+                            `Move "${quiz.quiz_title}" to the trash? You can restore it later from the Trash.`,
+                            () => deleteQuiz(quiz.id)
+                          );
                             }} className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-all">
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -3052,6 +3370,144 @@ The JSON must exactly follow this schema:
     );
   };
 
+  const renderTrash = () => {
+    if (!isAdmin) return null;
+    const folderCount = trashItems.reduce((n, t) => n + (t.payload?.folders?.length || 0), 0);
+    const quizCount = trashItems.reduce((n, t) => n + (t.payload?.quizzes?.length || 0), 0);
+
+    return (
+      <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
+        <div>
+          <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
+            <ChevronLeft className="w-4 h-4" /> Back to Dashboard
+          </button>
+
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] via-[#D4AF37] to-[#C5A059]"></div>
+
+            <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-6">
+              <div>
+                <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-2 flex items-center gap-3 font-bold">
+                  <Trash2 className="w-6 h-6 text-[#C5A059]" /> Trash
+                </h2>
+                <p className="text-xs dark:text-slate-400 text-slate-500 font-semibold">
+                  Deleted folders and assessments are kept here and can be restored. They stay
+                  recoverable until you empty the trash.
+                </p>
+              </div>
+              {trashItems.length > 0 && (
+                <button
+                  onClick={() => {
+                    showConfirm(
+                      "Empty Trash",
+                      "Permanently destroy every item in the trash? This cannot be undone and no restore will be possible.",
+                      () => emptyTrash()
+                    );
+                  }}
+                  className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl transition-all duration-300 font-bold text-xs"
+                >
+                  <Trash2 className="w-4 h-4" /> Empty Trash
+                </button>
+              )}
+            </div>
+
+            {trashItems.length > 0 && (
+              <div className="flex flex-wrap gap-2.5 mb-6">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider dark:text-slate-300 text-slate-500 bg-[#C5A059]/10 px-2.5 py-1 rounded-md">
+                  <Folder className="w-3.5 h-3.5 text-[#C5A059]" /> {folderCount} Folders
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider dark:text-slate-300 text-slate-500 bg-[#C5A059]/10 px-2.5 py-1 rounded-md">
+                  <BookOpen className="w-3.5 h-3.5 text-[#C5A059]" /> {quizCount} Assessments
+                </span>
+              </div>
+            )}
+
+            {trashItems.length === 0 ? (
+              <div className="text-center py-14 bg-[#C5A059]/5 rounded-xl border border-[#C5A059]/15">
+                <Trash2 className="w-10 h-10 mx-auto text-[#C5A059] opacity-40 mb-3" />
+                <p className="dark:text-slate-300 text-slate-600 font-bold text-sm">The trash is empty.</p>
+                <p className="text-slate-400 text-xs mt-1">Deleted items will appear here, ready to be restored.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {trashItems.map(entry => {
+                  const folders = entry.payload?.folders?.length || 0;
+                  const quizzes = entry.payload?.quizzes?.length || 0;
+                  return (
+                    <div
+                      key={entry.id}
+                      className="p-5 rounded-xl border border-[#C5A059]/20 bg-white/30 dark:bg-slate-900/30 flex flex-col md:flex-row gap-4 justify-between items-start"
+                    >
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className={`p-2 rounded-lg shrink-0 ${
+                          entry.kind === 'folder'
+                            ? 'bg-[#C5A059]/10 text-[#C5A059]'
+                            : 'bg-emerald-500/10 text-emerald-500'
+                        }`}>
+                          {entry.kind === 'folder' ? <Folder className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="font-serif dark:text-slate-100 text-slate-800 font-bold truncate">{makeTrashLabel(entry)}</h3>
+                          <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                            <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-[#C5A059]/10 text-[#C5A059] tracking-wider">
+                              {entry.kind === 'folder' ? 'Folder' : 'Assessment'}
+                            </span>
+                            {folders > 0 && (
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                                {folders} folder{folders === 1 ? '' : 's'}
+                              </span>
+                            )}
+                            {quizzes > 0 && (
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                                {quizzes} assessment{quizzes === 1 ? '' : 's'}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
+                              Deleted {new Date(entry.deleted_at).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => {
+                            showConfirm(
+                              "Restore Item",
+                              `Restore "${makeTrashLabel(entry)}" back to where it came from?`,
+                              () => restoreFromTrash(entry.id)
+                            );
+                          }}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 rounded-xl transition-all duration-300 font-bold text-xs"
+                        >
+                          <Undo className="w-3.5 h-3.5" /> Restore
+                        </button>
+                        <button
+                          onClick={() => {
+                            showConfirm(
+                              "Delete Forever",
+                              `Permanently destroy "${makeTrashLabel(entry)}"? There will be no way to recover it.`,
+                              () => purgeTrashItem(entry.id)
+                            );
+                          }}
+                          title="Delete permanently"
+                          className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl transition-all duration-300"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+        {renderSignatureFooter()}
+      </div>
+    );
+  };
+
   const renderReports = () => {
     return (
       <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
@@ -3225,6 +3681,7 @@ The JSON must exactly follow this schema:
         {currentView === 'taking_quiz' && renderTakingQuiz()}
         {currentView === 'review' && renderReview()}
         {currentView === 'reports' && renderReports()}
+        {currentView === 'trash' && renderTrash()}
         {currentView === 'analytics' && renderAnalytics()}
       </main>
 
