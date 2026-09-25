@@ -184,6 +184,7 @@ export default function App() {
   // depends on the trash still being in sync with the live tables.
   const [trashItems, setTrashItems] = useState([]);
   const [trashColumnSupported, setTrashColumnSupported] = useState(null);
+  const [trashError, setTrashError] = useState('');
 
   const [currentUser] = useState(() => {
     let savedUid = localStorage.getItem('sanctuaryUserId');
@@ -656,6 +657,7 @@ The JSON must exactly follow this schema:
     if (subtree.folders.length === 0) return;
 
     if (useTrash) {
+      setTrashError('');
       const entry = {
         id: 'trash_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
         kind: 'folder',
@@ -681,7 +683,16 @@ The JSON must exactly follow this schema:
             }]);
           if (error) throw error;
         } catch (err) {
+          // Refuse to delete: without a stored bundle the rows would be unrecoverable.
           console.error("Failed to record folder in trash:", err);
+          setTrashError(
+            'Delete cancelled: the folder could not be stored in the trash (' +
+            (err?.message || 'unknown error') +
+            '). Nothing was removed. Check the admin policies on `trash_items` in trash_system_update.sql.'
+          );
+          setTrashItems(trashItems);
+          saveLocalFallback(null, null, null, trashItems);
+          return;
         }
       }
 
@@ -737,26 +748,12 @@ The JSON must exactly follow this schema:
     if (!entry) return;
     if (!verifyRateLimit()) return;
 
+    setTrashError('');
+
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     const cloudBacked = isSupabaseReady && trashColumnSupported === true;
     const folders = entry.payload?.folders || [];
     const trashedQuizzes = entry.payload?.quizzes || [];
-
-    // Drop the bin entry first so a failure below cannot leave a duplicate.
-    const nextTrash = trashItems.filter(t => t.id !== entryId);
-    setTrashItems(nextTrash);
-    saveLocalFallback(null, null, null, nextTrash);
-    if (cloudBacked) {
-      try {
-        const { error } = await supabaseRef.current
-          .from('trash_items')
-          .delete()
-          .eq('id', entryId);
-        if (error) throw error;
-      } catch (err) {
-        console.error("Failed to remove trash record:", err);
-      }
-    }
 
     // Only restore folders whose parent is either already live or part of this same bundle,
     // otherwise a restore would rebuild a subtree hanging off a missing parent.
@@ -768,18 +765,20 @@ The JSON must exactly follow this schema:
       return liveGroupIds.has(parent) || bundleGroupIds.has(parent);
     });
 
-    const restorableQuizIds = new Set(restorableFolders.map(f => Number(f.id)));
+    // A quiz is restorable if its folder is coming back with it OR if that folder is still
+    // live. Deleting a quiz never removes its folder, so a single-quiz restore usually has a
+    // live parent — requiring the parent to be in the bundle dropped those quizzes entirely.
+    const acceptedGroupIds = new Set([...liveGroupIds, ...restorableFolders.map(f => Number(f.id))]);
     const restorableQuizzes = trashedQuizzes.filter(q => {
       if (q.group_id === null || q.group_id === undefined) return true;
-      return restorableQuizIds.has(Number(q.group_id));
+      return acceptedGroupIds.has(Number(q.group_id));
     });
 
     const updatedGroups = [...groups, ...restorableFolders];
     const updatedQuizzes = [...quizzes, ...restorableQuizzes];
-    setGroups(updatedGroups);
-    setQuizzes(updatedQuizzes);
-    saveLocalFallback(updatedQuizzes, updatedGroups, null, nextTrash);
 
+    // Write to the cloud BEFORE dropping the trash entry, so a rejected write leaves the item
+    // recoverable instead of silently destroying it.
     if (cloudBacked) {
       try {
         if (restorableFolders.length) {
@@ -792,8 +791,29 @@ The JSON must exactly follow this schema:
         }
       } catch (err) {
         console.error("Failed to restore to cloud:", err);
+        setTrashError(
+          'Restore rejected by the database: ' + (err?.message || 'unknown error') +
+          '. The item is still in the trash. If this is a permissions error, run the admin INSERT policies for `groups` and `quizzes` from trash_system_update.sql.'
+        );
+        return;
+      }
+
+      try {
+        const { error } = await supabaseRef.current
+          .from('trash_items')
+          .delete()
+          .eq('id', entryId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to remove trash record:", err);
       }
     }
+
+    const nextTrash = trashItems.filter(t => t.id !== entryId);
+    setTrashItems(nextTrash);
+    setGroups(updatedGroups);
+    setQuizzes(updatedQuizzes);
+    saveLocalFallback(updatedQuizzes, updatedGroups, null, nextTrash);
   }, [isSupabaseLoaded, groups, quizzes, trashItems, trashColumnSupported, verifyRateLimit]);
 
   // Irreversible: drop one entry and destroy the underlying rows for good.
@@ -1075,6 +1095,7 @@ The JSON must exactly follow this schema:
     if (!target) return;
 
     if (useTrash) {
+      setTrashError('');
       const entry = {
         id: 'trash_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
         kind: 'quiz',
@@ -1100,7 +1121,16 @@ The JSON must exactly follow this schema:
             }]);
           if (error) throw error;
         } catch (err) {
+          // Refuse to delete: without a stored bundle the assessment would be unrecoverable.
           console.error("Failed to record assessment in trash:", err);
+          setTrashError(
+            'Delete cancelled: the assessment could not be stored in the trash (' +
+            (err?.message || 'unknown error') +
+            '). Nothing was removed. Check the admin policies on `trash_items` in trash_system_update.sql.'
+          );
+          setTrashItems(trashItems);
+          saveLocalFallback(null, null, null, trashItems);
+          return;
         }
       }
 
@@ -3395,7 +3425,14 @@ The JSON must exactly follow this schema:
                   recoverable until you empty the trash.
                 </p>
               </div>
-              {trashItems.length > 0 && (
+            {trashError && (
+              <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/25 text-rose-600 dark:text-rose-400 rounded-xl flex items-start gap-3 animate-fade-in">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <p className="text-sm font-semibold leading-relaxed">{trashError}</p>
+              </div>
+            )}
+
+            {trashItems.length > 0 && (
                 <button
                   onClick={() => {
                     showConfirm(
