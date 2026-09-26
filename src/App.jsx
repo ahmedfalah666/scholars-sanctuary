@@ -707,13 +707,22 @@ The JSON must exactly follow this schema:
         try {
           const folderIds = subtree.folders.map(f => f.id);
           if (folderIds.length) {
-            await supabaseRef.current.from('groups').delete().in('id', folderIds);
+            const { error } = await supabaseRef.current.from('groups').delete().in('id', folderIds);
+            if (error) throw error;
           }
           if (subtree.quizzes.length) {
-            await supabaseRef.current.from('quizzes').delete().in('id', subtree.quizzes.map(q => q.id));
+            const { error } = await supabaseRef.current.from('quizzes').delete().in('id', subtree.quizzes.map(q => q.id));
+            if (error) throw error;
           }
         } catch (err) {
+          // The rows are still sitting in the database. Restoring them later would collide on
+          // the primary key, so say so instead of leaving a delete that only half happened.
           console.error("Cloud folder removal failed:", err);
+          setTrashError(
+            'The folder was hidden but NOT removed from the database (' +
+            (err?.message || 'unknown error') +
+            '). It is safe: it is in the trash, and Restoring will bring it back. Check the admin DELETE policies on `groups` and `quizzes`.'
+          );
         }
       }
       return;
@@ -781,12 +790,17 @@ The JSON must exactly follow this schema:
     // recoverable instead of silently destroying it.
     if (cloudBacked) {
       try {
+        // Upsert, not insert. If an earlier delete was rejected by RLS the row is still in the
+        // database, and a plain insert would fail on the primary key and make the item
+        // permanently unrestorable. Upsert heals that case and makes restore safe to retry.
         if (restorableFolders.length) {
-          const { error } = await supabaseRef.current.from('groups').insert(restorableFolders);
+          const { error } = await supabaseRef.current
+            .from('groups').upsert(restorableFolders, { onConflict: 'id' });
           if (error) throw error;
         }
         if (restorableQuizzes.length) {
-          const { error } = await supabaseRef.current.from('quizzes').insert(restorableQuizzes);
+          const { error } = await supabaseRef.current
+            .from('quizzes').upsert(restorableQuizzes, { onConflict: 'id' });
           if (error) throw error;
         }
       } catch (err) {
