@@ -71,26 +71,42 @@ const isEssayQuestion = (q) => {
 // Deleting a folder takes its whole subtree with it, so collect the folder plus every
 // descendant folder and every assessment inside them. Deleting one level only (the old
 // behaviour) left children behind with a dangling parent_id.
+// Identity helper for database ids.
+//
+// Postgres bigint ids come back as JS numbers while locally created rows use
+// numeric strings, so identity has to bridge those two. It must never be based on
+// Number(): Number('local_abc') is NaN, and a Set treats NaN as equal to NaN, so a
+// single non-numeric id would make every non-numeric id look like the same row and
+// one folder delete would sweep away unrelated branches.
+const idKey = (v) => (v === null || v === undefined ? null : String(v));
+
 const collectSubtree = (rootId, allGroups, allQuizzes) => {
-  const folderIds = new Set([Number(rootId)]);
+  const folderIds = new Set();
+  const rootKey = idKey(rootId);
+  if (rootKey !== null) folderIds.add(rootKey);
+
   let grew = true;
   while (grew) {
     grew = false;
     allGroups.forEach(g => {
-      const parent = g.parent_id === null || g.parent_id === undefined ? null : Number(g.parent_id);
-      const id = Number(g.id);
-      if (!folderIds.has(id) && parent !== null && folderIds.has(parent)) {
-        folderIds.add(id);
+      const key = idKey(g.id);
+      if (key === null || folderIds.has(key)) return;
+      const parentKey = idKey(g.parent_id);
+      if (parentKey !== null && folderIds.has(parentKey)) {
+        folderIds.add(key);
         grew = true;
       }
     });
   }
 
-  const root = allGroups.find(g => Number(g.id) === Number(rootId));
+  const root = allGroups.find(g => idKey(g.id) === rootKey);
 
   return {
-    folders: allGroups.filter(g => folderIds.has(Number(g.id))),
-    quizzes: allQuizzes.filter(q => folderIds.has(Number(q.group_id))),
+    folders: allGroups.filter(g => folderIds.has(idKey(g.id))),
+    quizzes: allQuizzes.filter(q => {
+      const key = idKey(q.group_id);
+      return key !== null && folderIds.has(key);
+    }),
     label: root ? root.name : 'Unknown Folder'
   };
 };
@@ -696,9 +712,12 @@ The JSON must exactly follow this schema:
         }
       }
 
-      const folderIdSet = new Set(subtree.folders.map(f => f.id));
-      const updatedGroups = groups.filter(g => !folderIdSet.has(g.id));
-      const updatedQuizzes = quizzes.filter(q => !folderIdSet.has(q.group_id));
+      const folderIdSet = new Set(subtree.folders.map(f => idKey(f.id)));
+      const updatedGroups = groups.filter(g => !folderIdSet.has(idKey(g.id)));
+      const updatedQuizzes = quizzes.filter(q => {
+        const key = idKey(q.group_id);
+        return key === null || !folderIdSet.has(key);
+      });
       setGroups(updatedGroups);
       setQuizzes(updatedQuizzes);
       saveLocalFallback(updatedQuizzes, updatedGroups, null, nextTrash);
@@ -766,21 +785,21 @@ The JSON must exactly follow this schema:
 
     // Only restore folders whose parent is either already live or part of this same bundle,
     // otherwise a restore would rebuild a subtree hanging off a missing parent.
-    const bundleGroupIds = new Set(folders.map(f => Number(f.id)));
-    const liveGroupIds = new Set(groups.map(g => Number(g.id)));
+    const bundleGroupIds = new Set(folders.map(f => idKey(f.id)));
+    const liveGroupIds = new Set(groups.map(g => idKey(g.id)));
     const restorableFolders = folders.filter(f => {
-      if (f.parent_id === null || f.parent_id === undefined) return true;
-      const parent = Number(f.parent_id);
-      return liveGroupIds.has(parent) || bundleGroupIds.has(parent);
+      const parentKey = idKey(f.parent_id);
+      if (parentKey === null) return true;
+      return liveGroupIds.has(parentKey) || bundleGroupIds.has(parentKey);
     });
 
     // A quiz is restorable if its folder is coming back with it OR if that folder is still
     // live. Deleting a quiz never removes its folder, so a single-quiz restore usually has a
     // live parent — requiring the parent to be in the bundle dropped those quizzes entirely.
-    const acceptedGroupIds = new Set([...liveGroupIds, ...restorableFolders.map(f => Number(f.id))]);
+    const acceptedGroupIds = new Set([...liveGroupIds, ...restorableFolders.map(f => idKey(f.id))]);
     const restorableQuizzes = trashedQuizzes.filter(q => {
-      if (q.group_id === null || q.group_id === undefined) return true;
-      return acceptedGroupIds.has(Number(q.group_id));
+      const key = idKey(q.group_id);
+      return key === null || acceptedGroupIds.has(key);
     });
 
     const updatedGroups = [...groups, ...restorableFolders];
