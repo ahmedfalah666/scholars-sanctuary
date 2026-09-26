@@ -91,16 +91,26 @@ const resolveAdminStatus = async (client, session) => {
   const email = session?.user?.email;
   if (!client || !email) return false;
   try {
+    // No email filter on purpose. The RLS policy on admin_users is
+    //   lower(email) = lower(auth.jwt() ->> 'email')
+    // so this select can only ever return the signed-in user's own row, or nothing.
+    // Filtering on the address in PostgREST is what used to make the UI disagree with
+    // is_admin(): an exact .eq() missed a case difference, and .ilike() treated the
+    // underscores in addresses like "ahmed_falah@" as single-character wildcards,
+    // which can match two rows and make maybeSingle() error. Comparing in JS against a
+    // set RLS already narrowed to one row avoids both, and keeps this agreeing with
+    // is_admin(), which compares lower(email) on both sides.
     const { data, error } = await client
       .from('admin_users')
       .select('email')
-      .eq('email', email)
-      .maybeSingle();
+      .limit(1);
     if (error) {
       console.warn('Admin lookup failed:', error.message);
       return false;
     }
-    return !!data;
+    if (!data || data.length === 0) return false;
+    const target = String(email).trim().toLowerCase();
+    return data.some(row => String(row.email || '').trim().toLowerCase() === target);
   } catch (err) {
     console.warn('Admin lookup failed:', err);
     return false;
@@ -195,7 +205,10 @@ export default function App() {
   const [quizToMove, setQuizToMove] = useState(null);
   const [targetGroupId, setTargetGroupId] = useState('root');
 
-  const [currentView, setCurrentView] = useState('dashboard'); 
+  const [currentView, setCurrentView] = useState('dashboard');
+  // Screens visited before the current one, so Back returns to where the user actually
+  // came from instead of always dumping them on the dashboard.
+  const [viewHistory, setViewHistory] = useState([]);
   const [activeQuiz, setActiveQuiz] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswers, setUserAnswers] = useState({});
@@ -265,6 +278,28 @@ export default function App() {
     }, 1000);
     return () => clearTimeout(timer);
   }, [floodingCooldown, isFloodingBlocked]);
+
+  // Navigate, remembering the screen being left so goBack() can return to it.
+  const navigateTo = useCallback((view) => {
+    setCurrentView(prev => {
+      if (prev === view) return prev;
+      setViewHistory(history => [...history, prev]);
+      return view;
+    });
+  }, []);
+
+  // Returns to the previous screen, or the dashboard when there is nothing to go back to.
+  const goBack = useCallback(() => {
+    setViewHistory(history => {
+      if (history.length === 0) {
+        setCurrentView('dashboard');
+        return history;
+      }
+      const previous = history[history.length - 1];
+      setCurrentView(previous);
+      return history.slice(0, -1);
+    });
+  }, []);
 
   const verifyRateLimit = useCallback(() => {
     const now = Date.now();
@@ -1881,7 +1916,7 @@ The JSON must exactly follow this schema:
                   <BarChart2 className="w-4 h-4" /> Analytics
                 </button>
                 <button 
-                  onClick={() => setCurrentView('trash')}
+                  onClick={() => navigateTo('trash')}
                   title="Restore deleted folders and assessments"
                   className="flex items-center gap-2 px-4 py-2 border border-slate-400/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md text-slate-500 dark:text-slate-400 hover:bg-slate-500/10 hover:text-slate-700 dark:hover:text-slate-200 transition-all duration-300 rounded-lg text-sm font-semibold"
                 >
@@ -3503,6 +3538,13 @@ The JSON must exactly follow this schema:
 
     return (
       <div className="animate-fade-in">
+        <button
+          onClick={goBack}
+          className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-6 transition-colors duration-300 font-bold text-sm"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          {viewHistory.length > 0 ? 'Back' : 'Back to Dashboard'}
+        </button>
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-serif font-bold text-slate-800 dark:text-white">Trash</h1>
