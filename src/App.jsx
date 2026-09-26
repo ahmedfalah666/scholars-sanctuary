@@ -80,6 +80,33 @@ const isEssayQuestion = (q) => {
 // one folder delete would sweep away unrelated branches.
 const idKey = (v) => (v === null || v === undefined ? null : String(v));
 
+// Whether a session belongs to an admin.
+//
+// The list of admins lives in the database (public.admin_users) rather than in this
+// file, so granting someone admin access is an INSERT and needs no code change and
+// no redeploy. RLS on admin_users lets a signed-in user read only their own row, so
+// this cannot be used to enumerate the admin list. The same function backs every
+// write policy via public.is_admin(), so the UI and the database always agree.
+const resolveAdminStatus = async (client, session) => {
+  const email = session?.user?.email;
+  if (!client || !email) return false;
+  try {
+    const { data, error } = await client
+      .from('admin_users')
+      .select('email')
+      .eq('email', email)
+      .maybeSingle();
+    if (error) {
+      console.warn('Admin lookup failed:', error.message);
+      return false;
+    }
+    return !!data;
+  } catch (err) {
+    console.warn('Admin lookup failed:', err);
+    return false;
+  }
+};
+
 const collectSubtree = (rootId, allGroups, allQuizzes) => {
   const folderIds = new Set();
   const rootKey = idKey(rootId);
@@ -267,16 +294,12 @@ export default function App() {
           supabaseRef.current = client;
           setIsSupabaseLoaded(true);
 
-          // Track Auth State for Admin status
-          client.auth.onAuthStateChange((event, session) => {
-            if (session?.user?.email === 'ahmedfalahoffical@gmail.com') {
-              setIsAdmin(true);
-              localStorage.setItem('isSanctuaryAdmin', 'true');
-            } else {
-              setIsAdmin(false);
-              localStorage.setItem('isSanctuaryAdmin', 'false');
-            }
-          });
+      // Track Auth State for Admin status
+      client.auth.onAuthStateChange(async (event, session) => {
+        const admin = await resolveAdminStatus(client, session);
+        setIsAdmin(admin);
+        localStorage.setItem('isSanctuaryAdmin', admin ? 'true' : 'false');
+      });
         }
       } catch (e) {
         console.warn("Supabase integration failed. Falling back to local state.", e);
@@ -922,12 +945,24 @@ The JSON must exactly follow this schema:
     if (error) {
       console.error("Supabase Auth Error:", error.message, error.status);
       setLoginError(error.message);
-    } else {
-      setShowAdminLoginModal(false);
-      setAdminUsernameInput('');
-      setAdminPasswordInput('');
-      setLoginError('');
+      return;
     }
+
+    // Correct password is not enough: the account also has to be listed in admin_users.
+    // Say so explicitly, otherwise a valid account appears to have no admin access
+    // and there is no way to tell that from a permissions bug.
+    const { data: sessionData } = await supabaseRef.current.auth.getSession();
+    const admin = await resolveAdminStatus(supabaseRef.current, sessionData?.session);
+    if (!admin) {
+      await supabaseRef.current.auth.signOut();
+      setLoginError('Signed in, but this account is not an admin. Add it with: INSERT INTO public.admin_users (email) VALUES (\'' + email + '\');');
+      return;
+    }
+
+    setShowAdminLoginModal(false);
+    setAdminUsernameInput('');
+    setAdminPasswordInput('');
+    setLoginError('');
   };
 
   const handleAdminLogout = async () => {
