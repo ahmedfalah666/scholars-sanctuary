@@ -595,7 +595,7 @@ export default function App() {
 
 ESSAY QUESTION SUPPORT:
 You may also include self-graded essay (long-answer) questions. A student answers these on
-paper, then reveals your answer and marks themselves right or wrong â€” so an essay question
+paper, then reveals your answer and marks themselves right or wrong — so an essay question
 MUST have a complete, self-contained model answer.
 
 To emit an essay question, tag it with "type": "essay", supply "answerText", and leave
@@ -1749,7 +1749,7 @@ The JSON must exactly follow this schema:
     incorrect.forEach((item, idx) => {
       const q = item.question;
 
-      // Essay nodes have no options or picked choice â€” report the concealed model answer instead.
+      // Essay nodes have no options or picked choice — report the concealed model answer instead.
       if (item.isEssay) {
         content += `Mistake #${idx + 1} (Question #${item.index + 1}) - ESSAY\n`;
         content += `Question: ${q.question}\n`;
@@ -1800,7 +1800,7 @@ The JSON must exactly follow this schema:
         const marker = o.isCorrect 
           ? `[Correct Answer]` 
           : (o.id === item.selectedOptionId ? `[Your Choice]` : `[Option]`);
-        content += `  â€¢ ${o.id}. ${o.text} ${marker}\n`;
+        content += `  • ${o.id}. ${o.text} ${marker}\n`;
         if (o.explanation) {
           content += `    Explanation: ${o.explanation}\n`;
         }
@@ -2165,7 +2165,7 @@ The JSON must exactly follow this schema:
                           </span>
                           {isStarted && (
                             <>
-                              <span className="text-slate-400 text-xs">â€¢</span>
+                              <span className="text-slate-400 text-xs">•</span>
                               <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md ${isCompleted ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'}`}>
                                 {isCompleted ? <Award className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
                                 {isCompleted ? 'Completed' : `In Progress (${answeredCount}/${quiz.questions.length})`}
@@ -2493,7 +2493,7 @@ The JSON must exactly follow this schema:
                             qs[qIdx].explanation = e.target.value;
                             setEditedQuizData({ ...editedQuizData, questions: qs });
                           }}
-                          placeholder="Extra guidance shown after the answer is revealed â€” key points to include, common pitfalls."
+                          placeholder="Extra guidance shown after the answer is revealed — key points to include, common pitfalls."
                           className="w-full px-4 py-2 border border-[#C5A059]/20 rounded-xl bg-white/20 dark:bg-slate-950/40 focus:outline-none focus:border-[#D4AF37] text-xs font-medium leading-relaxed"
                           rows="3"
                         />
@@ -2899,7 +2899,7 @@ The JSON must exactly follow this schema:
                   key={idx}
                   onClick={() => handleJumpToQuestion(idx)}
                   className={`shrink-0 w-11 h-11 flex items-center justify-center rounded-xl border text-sm cursor-pointer transition-all duration-300 relative ${borderClass} ${bgClass} ${textClass} ${activeIndicator}`}
-                  title={`Question ${idx + 1}${nodeIsEssay ? ' (Essay â€” self-graded)' : ''}`}
+                  title={`Question ${idx + 1}${nodeIsEssay ? ' (Essay — self-graded)' : ''}`}
                 >
                   {idx + 1}
                   {nodeIsEssay && (
@@ -2966,7 +2966,7 @@ The JSON must exactly follow this schema:
                     </h4>
                     <p className="text-sm dark:text-slate-400 text-slate-600 leading-relaxed font-medium max-w-lg mx-auto mb-6">
                       Write your answer out on paper first, then reveal the model answer and judge
-                      your own work. There is nothing to type here â€” revealing locks your verdict in.
+                      your own work. There is nothing to type here — revealing locks your verdict in.
                     </p>
                     <button
                       onClick={revealEssayAnswer}
@@ -3157,7 +3157,7 @@ The JSON must exactly follow this schema:
                     <span>Uncertainty Toggler</span>
                   </div>
                   <div className="flex items-center gap-1.5 font-mono">
-                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">â† / â†’</span>
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
                     <span>Slide Navigate</span>
                   </div>
                 </>
@@ -3172,7 +3172,7 @@ The JSON must exactly follow this schema:
                     <span>Uncertainty Toggler</span>
                   </div>
                   <div className="flex items-center gap-1.5 font-mono">
-                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">â† / â†’</span>
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
                     <span>Slide Navigate</span>
                   </div>
                 </>
@@ -3960,7 +3960,7 @@ The JSON must exactly follow this schema:
                     value={adminPasswordInput}
                     onChange={(e) => setAdminPasswordInput(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] text-sm font-medium"
-                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                    placeholder="••••••••••••"
                   />
                 </div>
               </div>
