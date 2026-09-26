@@ -7,10 +7,31 @@ Last updated: 2026-09-26
 
 ---
 
+## 0. Current status
+
+**Two commits are local and unpushed.** Run the SQL, then push, then reload.
+
+| Step | Action |
+| --- | --- |
+| 1 | Run `admin_and_soft_delete.sql` in the Supabase SQL Editor |
+| 2 | Read the CHECKS output at the bottom of that file |
+| 3 | `git push` |
+| 4 | Redeploy, then hard-reload the browser |
+
+**Adding an admin** is now one line and needs no code change and no redeploy:
+
+```sql
+INSERT INTO public.admin_users (email, note) VALUES ('someone@example.com', 'editor');
+```
+
+The account must also exist in Supabase Auth. Order matters: create the auth user
+first, otherwise the login is refused as "not an admin".
+
 ## 1. What we are working on
 
 Rebuilding the admin delete/restore system so it is **quiet, strong and stable**,
 and adding **multi-admin support** so more than one account can manage content.
+
 
 ## 2. Project shape
 
@@ -26,6 +47,7 @@ and adding **multi-admin support** so more than one account can manage content.
 
 | Commit | What it did |
 | --- | --- |
+| `5212e44` | Admin access becomes a database list; adds SESSION_STATE.md |
 | `756abeb` | Fix folder delete destroying unrelated branches (`idKey`) |
 | `6a6849e` | Cloud delete reports failures; trash restore uses upsert |
 | `14277f6` | Fix trash restore; deletes fail closed instead of losing data |
@@ -95,6 +117,24 @@ Delete sets the timestamp, restore clears it, and only "Delete Forever" issues a
 real `DELETE`. Nothing is destroyed, so no cascade can fire, and a restored row is
 bit-for-bit the original — correct `created_at`, correct ordering, progress intact.
 
+### 6.1 How the soft delete is wired
+
+- `groups` and `quizzes` both carry `deleted_at timestamptz`.
+- `loadData` reads live rows (`.is('deleted_at', null)`) into the existing `groups`
+  and `quizzes` state, and trashed rows (`.not('deleted_at','is',null)`) into
+  `trashedGroups` and `trashedQuizzes`. **The rest of the app never sees a deleted
+  row**, so nothing else needed changing.
+- Delete stamps `deleted_at` on the folder subtree and its assessments. Restore
+  stamps `NULL`. Purge is the only real `DELETE`.
+- LocalStorage mode mirrors the cloud shape exactly, using `sanctuaryTrashedGroups`
+  and `sanctuaryTrashedQuizzes`. The old `sanctuaryTrash` key is abandoned.
+- `softDeleteSupported` is a ref probed once at startup. If `deleted_at` is missing,
+  deletion is **disabled with a message** rather than falling back to a hard delete.
+- The Trash view lists only the **root of each trashed branch**. A child whose parent
+  is also trashed is handled as part of its parent, so nothing is listed twice.
+- `collectSubtree` is still needed, but now only to decide what to *stamp*. It can no
+  longer destroy anything, which is why bug 5.1 is no longer dangerous.
+
 ## 7. Multi-admin
 
 Admin access was hardcoded as `ahmedfalahoffical@gmail.com` in two places:
@@ -119,12 +159,19 @@ SQL files in the repo: `essay_questions_update.sql`, `trash_system_update.sql`
 
 ## 9. Open items / risks
 
+- **The SQL has not been run against the real database yet.** Everything about the
+  soft delete is verified by logic tests and a clean build, not against Supabase.
+  `groups` and `quizzes` have unknown column names, so the migration inserts only
+  `id`, `name`, `parent_id`, `quiz_title`, `questions` and `group_id`. If those
+  tables have further `NOT NULL` columns with no default, the migration step 3 will
+  fail and the CHECKS output will show it.
 - The `ON DELETE CASCADE` constraint on `groups.parent_id` was added at the user's
-  request during debugging and needs removing — it lets Postgres delete rows on its
-  own, independent of the app.
-- `trash_items` holds JSON bundles of things that were deleted. If any are still
-  there they are a recovery source for data already lost.
-- No automated test suite exists. A regression like 5.1 was only caught by hand.
+  request during debugging. `admin_and_soft_delete.sql` step 5 removes it.
+- `trash_items` is retired but left in place so the migrated bundles stay
+  recoverable. Drop it once the new Trash view is confirmed working.
+- No automated test suite exists. The subtree and round-trip logic was verified with
+  throwaway Node scripts; those scripts are not committed. Consider committing them.
+- LocalStorage mode was not exercised in a browser this session.
 
 ## 10. Conventions
 

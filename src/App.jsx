@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/refs */
+﻿/* eslint-disable react-hooks/refs */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   BookOpen, 
@@ -138,7 +138,21 @@ const collectSubtree = (rootId, allGroups, allQuizzes) => {
   };
 };
 
-const makeTrashLabel = (item) => item.label || 'Untitled item';
+// How deep a folder sits in a tree, used to delete or restore children before parents
+// so a self-referencing foreign key never blocks the write.
+const depthOf = (group, allGroups) => {
+  let depth = 0;
+  let cursor = group;
+  const seen = new Set([idKey(group.id)]);
+  while (cursor && cursor.parent_id !== null && cursor.parent_id !== undefined && depth < 50) {
+    const parentKey = idKey(cursor.parent_id);
+    if (seen.has(parentKey)) break;
+    seen.add(parentKey);
+    cursor = allGroups.find(g => idKey(g.id) === parentKey);
+    if (cursor) depth++;
+  }
+  return depth;
+};
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -225,9 +239,10 @@ export default function App() {
 
   // Admin-only recycle bin. Each entry is a self-contained bundle so a restore never
   // depends on the trash still being in sync with the live tables.
-  const [trashItems, setTrashItems] = useState([]);
-  const [trashColumnSupported, setTrashColumnSupported] = useState(null);
+  const [trashedGroups, setTrashedGroups] = useState([]);
+  const [trashedQuizzes, setTrashedQuizzes] = useState([]);
   const [trashError, setTrashError] = useState('');
+  const softDeleteSupported = useRef(false);
 
   const [currentUser] = useState(() => {
     let savedUid = localStorage.getItem('sanctuaryUserId');
@@ -316,23 +331,29 @@ export default function App() {
     const localStates = localStorage.getItem('sanctuaryQuizStates');
     const localMsgs = localStorage.getItem('sanctuaryInbox');
     const localReports = localStorage.getItem('sanctuaryReports');
-    const localTrash = localStorage.getItem('sanctuaryTrash');
+    const localTrashedGroups = localStorage.getItem('sanctuaryTrashedGroups');
+    const localTrashedQuizzes = localStorage.getItem('sanctuaryTrashedQuizzes');
 
     if (localQuizzes) setQuizzes(JSON.parse(localQuizzes));
     if (localGroups) setGroups(JSON.parse(localGroups));
     if (localStates) setQuizStates(JSON.parse(localStates));
     if (localMsgs) setInboxMessages(JSON.parse(localMsgs));
     if (localReports) setReports(JSON.parse(localReports));
-    if (localTrash) setTrashItems(JSON.parse(localTrash));
+    if (localTrashedGroups) setTrashedGroups(JSON.parse(localTrashedGroups));
+    if (localTrashedQuizzes) setTrashedQuizzes(JSON.parse(localTrashedQuizzes));
   }, []);
 
   const loadData = useCallback(async () => {
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
     if (isSupabaseReady) {
       try {
+        // Live rows and trashed rows are fetched separately so the rest of the app can
+        // keep reading `groups` / `quizzes` as a list of live rows and never has to
+        // think about deleted_at. Only the Trash view looks at the trashed pair.
         const { data: fetchedGroups, error: groupErr } = await supabaseRef.current
           .from('groups')
           .select('*')
+          .is('deleted_at', null)
           .order('name');
         if (groupErr) throw groupErr;
         setGroups(fetchedGroups || []);
@@ -340,9 +361,24 @@ export default function App() {
         const { data: fetchedQuizzes, error: quizErr } = await supabaseRef.current
           .from('quizzes')
           .select('*')
+          .is('deleted_at', null)
           .order('created_at', { ascending: false });
         if (quizErr) throw quizErr;
         setQuizzes(fetchedQuizzes || []);
+
+        const { data: trashedGroupRows } = await supabaseRef.current
+          .from('groups')
+          .select('*')
+          .not('deleted_at', 'is', null)
+          .order('deleted_at', { ascending: false });
+        setTrashedGroups(trashedGroupRows || []);
+
+        const { data: trashedQuizRows } = await supabaseRef.current
+          .from('quizzes')
+          .select('*')
+          .not('deleted_at', 'is', null)
+          .order('deleted_at', { ascending: false });
+        setTrashedQuizzes(trashedQuizRows || []);
 
         const { data: fetchedMsgs } = await supabaseRef.current.from('inbox_messages').select('*').order('created_at', { ascending: false });
         setInboxMessages(fetchedMsgs || []);
@@ -383,11 +419,18 @@ export default function App() {
 
 
 
-  const saveLocalFallback = (updatedQuizzes, updatedGroups, updatedStates, updatedTrash) => {
-    if (updatedQuizzes) localStorage.setItem('sanctuaryQuizzes', JSON.stringify(updatedQuizzes));
+  // LocalStorage mode has no database, so the trashed rows are kept in their own keys
+  // and mirror the cloud shape exactly: same objects, same deleted_at, same restore.
+  const saveTrashToLocal = (nextTrashedGroups, nextTrashedQuizzes) => {
+    localStorage.setItem('sanctuaryTrashedGroups', JSON.stringify(nextTrashedGroups));
+    localStorage.setItem('sanctuaryTrashedQuizzes', JSON.stringify(nextTrashedQuizzes));
+  };
+
+  const saveLocalFallback = (updatedQuizzes, updatedGroups, updatedStates, updatedTrash) => {    if (updatedQuizzes) localStorage.setItem('sanctuaryQuizzes', JSON.stringify(updatedQuizzes));
     if (updatedGroups) localStorage.setItem('sanctuaryGroups', JSON.stringify(updatedGroups));
     if (updatedStates) localStorage.setItem('sanctuaryQuizStates', JSON.stringify(updatedStates));
-    if (updatedTrash) localStorage.setItem('sanctuaryTrash', JSON.stringify(updatedTrash));
+    if (updatedTrash && updatedTrash.groups) localStorage.setItem('sanctuaryTrashedGroups', JSON.stringify(updatedTrash.groups));
+    if (updatedTrash && updatedTrash.quizzes) localStorage.setItem('sanctuaryTrashedQuizzes', JSON.stringify(updatedTrash.quizzes));
   };
 
   useEffect(() => {
@@ -447,61 +490,34 @@ export default function App() {
     return () => { cancelled = true; };
   }, [isSupabaseLoaded, essayColumnSupported]);
 
-  // Probe for the optional `trash_items` table. Without it, deletions fall back to an
-  // immediate hard delete so behaviour matches the pre-trash app rather than silently
-  // losing data.
+  // Probe for the optional `deleted_at` columns. Until they are confirmed, deletions
+  // refuse to run rather than falling back to a hard delete, so a database that has not
+  // run admin_and_soft_delete.sql cannot lose content.
   useEffect(() => {
     if (!isSupabaseLoaded || !supabaseRef.current) return;
-    if (trashColumnSupported !== null) return;
+    if (softDeleteSupported.current) return;
 
     let cancelled = false;
-    const probeTrashTable = async () => {
+    const probeSoftDelete = async () => {
       try {
         const { error } = await supabaseRef.current
-          .from('trash_items')
-          .select('id')
+          .from('groups')
+          .select('deleted_at')
           .limit(1);
         if (cancelled) return;
         if (error) {
-          console.warn("trash_items table unavailable; deletions will be permanent.");
-          setTrashColumnSupported(false);
+          console.warn('deleted_at unavailable on groups; deletion is disabled until it is added.');
         } else {
-          setTrashColumnSupported(true);
+          softDeleteSupported.current = true;
         }
       } catch {
-        if (!cancelled) setTrashColumnSupported(false);
+        // Leave the flag false; the delete handler will explain.
       }
     };
-    probeTrashTable();
+    probeSoftDelete();
 
     return () => { cancelled = true; };
-  }, [isSupabaseLoaded, trashColumnSupported]);
-
-  // Load the trash once the table is confirmed present.
-  useEffect(() => {
-    if (trashColumnSupported !== true) return;
-    if (!supabaseRef.current) return;
-
-    let cancelled = false;
-    const loadTrash = async () => {
-      try {
-        const { data, error } = await supabaseRef.current
-          .from('trash_items')
-          .select('*')
-          .order('deleted_at', { ascending: false });
-        if (cancelled) return;
-        if (error) throw error;
-        setTrashItems(data || []);
-      } catch (err) {
-        console.error("Failed to load trash:", err);
-        const localTrash = localStorage.getItem('sanctuaryTrash');
-        if (!cancelled && localTrash) setTrashItems(JSON.parse(localTrash));
-      }
-    };
-    loadTrash();
-
-    return () => { cancelled = true; };
-  }, [trashColumnSupported]);
+  }, [isSupabaseLoaded]);
 
   // Fetch Analytics Effect
   useEffect(() => {
@@ -544,7 +560,7 @@ export default function App() {
 
 ESSAY QUESTION SUPPORT:
 You may also include self-graded essay (long-answer) questions. A student answers these on
-paper, then reveals your answer and marks themselves right or wrong — so an essay question
+paper, then reveals your answer and marks themselves right or wrong â€” so an essay question
 MUST have a complete, self-contained model answer.
 
 To emit an essay question, tag it with "type": "essay", supply "answerText", and leave
@@ -684,228 +700,257 @@ The JSON must exactly follow this schema:
     setEditGroupName('');
   };
 
-  // Soft-delete a folder: capture the folder plus its entire subtree into the trash, then
-  // remove it from the live tables. Nothing is destroyed, so a mis-click is reversible.
+  // Move a folder and its whole subtree to the trash by stamping deleted_at.
+  //
+  // Nothing is removed from the database. That is the point: a physical delete let
+  // foreign key cascades fire independently of this app, and a restore had to rebuild
+  // rows from a snapshot, which lost created_at and any server-generated value.
+  // Stamping a column cannot cascade and cannot lose a field.
   const handleDeleteGroup = useCallback(async (gId) => {
     if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
-    // Without the trash table there is nowhere to recover to, so fall back to a hard delete.
-    const useTrash = !isSupabaseReady || trashColumnSupported === true;
+    setTrashError('');
+
+    if (isSupabaseReady && !softDeleteSupported.current) {
+      setTrashError('Deletion is unavailable: the deleted_at column is missing. Run admin_and_soft_delete.sql in Supabase, then reload.');
+      return;
+    }
 
     const subtree = collectSubtree(gId, groups, quizzes);
     if (subtree.folders.length === 0) return;
 
-    if (useTrash) {
-      setTrashError('');
-      const entry = {
-        id: 'trash_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
-        kind: 'folder',
-        label: subtree.label,
-        deleted_at: new Date().toISOString(),
-        payload: { folders: subtree.folders, quizzes: subtree.quizzes }
-      };
+    const stamp = new Date().toISOString();
+    const folderIdSet = new Set(subtree.folders.map(f => idKey(f.id)));
 
-      const nextTrash = [entry, ...trashItems];
-      setTrashItems(nextTrash);
-      saveLocalFallback(null, null, null, nextTrash);
-
-      if (isSupabaseReady && trashColumnSupported === true) {
-        try {
+    if (isSupabaseReady) {
+      try {
+        const folderIds = subtree.folders.map(f => f.id);
+        if (folderIds.length) {
           const { error } = await supabaseRef.current
-            .from('trash_items')
-            .insert([{
-              id: entry.id,
-              kind: entry.kind,
-              label: entry.label,
-              deleted_at: entry.deleted_at,
-              payload: entry.payload
-            }]);
+            .from('groups')
+            .update({ deleted_at: stamp })
+            .in('id', folderIds)
+            .is('deleted_at', null);
           if (error) throw error;
-        } catch (err) {
-          // Refuse to delete: without a stored bundle the rows would be unrecoverable.
-          console.error("Failed to record folder in trash:", err);
-          setTrashError(
-            'Delete cancelled: the folder could not be stored in the trash (' +
-            (err?.message || 'unknown error') +
-            '). Nothing was removed. Check the admin policies on `trash_items` in trash_system_update.sql.'
-          );
-          setTrashItems(trashItems);
-          saveLocalFallback(null, null, null, trashItems);
-          return;
         }
-      }
-
-      const folderIdSet = new Set(subtree.folders.map(f => idKey(f.id)));
-      const updatedGroups = groups.filter(g => !folderIdSet.has(idKey(g.id)));
-      const updatedQuizzes = quizzes.filter(q => {
-        const key = idKey(q.group_id);
-        return key === null || !folderIdSet.has(key);
-      });
-      setGroups(updatedGroups);
-      setQuizzes(updatedQuizzes);
-      saveLocalFallback(updatedQuizzes, updatedGroups, null, nextTrash);
-
-      if (isSupabaseReady) {
-        try {
-          const folderIds = subtree.folders.map(f => f.id);
-          if (folderIds.length) {
-            const { error } = await supabaseRef.current.from('groups').delete().in('id', folderIds);
-            if (error) throw error;
-          }
-          if (subtree.quizzes.length) {
-            const { error } = await supabaseRef.current.from('quizzes').delete().in('id', subtree.quizzes.map(q => q.id));
-            if (error) throw error;
-          }
-        } catch (err) {
-          // The rows are still sitting in the database. Restoring them later would collide on
-          // the primary key, so say so instead of leaving a delete that only half happened.
-          console.error("Cloud folder removal failed:", err);
-          setTrashError(
-            'The folder was hidden but NOT removed from the database (' +
-            (err?.message || 'unknown error') +
-            '). It is safe: it is in the trash, and Restoring will bring it back. Check the admin DELETE policies on `groups` and `quizzes`.'
-          );
+        const quizIds = subtree.quizzes.map(q => q.id);
+        if (quizIds.length) {
+          const { error } = await supabaseRef.current
+            .from('quizzes')
+            .update({ deleted_at: stamp })
+            .in('id', quizIds)
+            .is('deleted_at', null);
+          if (error) throw error;
         }
+      } catch (err) {
+        // Fail closed. A partly deleted subtree is worse than none.
+        console.error("Failed to mark folder as deleted:", err);
+        setTrashError('Nothing was deleted (' + (err?.message || 'unknown error') + '). Check that the deleted_at columns exist and that the admin UPDATE policies allow is_admin().');
+        return;
       }
-      return;
     }
 
-    // Hard delete (trash table unavailable).
+    // Move the rows across in local state, keeping the original objects intact so that
+    // a restore hands back the same row rather than a reconstruction.
+    const keptQuizzes = quizzes.filter(q => {
+      const key = idKey(q.group_id);
+      return key === null || !folderIdSet.has(key);
+    });
+    const movedQuizzes = quizzes.filter(q => {
+      const key = idKey(q.group_id);
+      return key !== null && folderIdSet.has(key);
+    });
+    const keptGroups = groups.filter(g => !folderIdSet.has(idKey(g.id)));
+    const movedGroups = groups.filter(g => folderIdSet.has(idKey(g.id)));
+
+    setGroups(keptGroups);
+    setQuizzes(keptQuizzes);
+    setTrashedGroups(prev => [...movedGroups.map(g => ({ ...g, deleted_at: g.deleted_at || stamp })), ...prev]);
+    setTrashedQuizzes(prev => [...movedQuizzes.map(q => ({ ...q, deleted_at: q.deleted_at || stamp })), ...prev]);
+
+    saveLocalFallback(keptQuizzes, keptGroups, null, { groups: movedGroups, quizzes: movedQuizzes });
+    saveTrashToLocal(movedGroups, movedQuizzes);
+  }, [isSupabaseLoaded, groups, quizzes, verifyRateLimit]);
+
+  // Bring a trashed folder back. This clears deleted_at on the original rows, so every
+  // column, the created_at ordering and any student progress are exactly as they were.
+  const restoreFolderFromTrash = useCallback(async (rootGroupId) => {
+    if (!verifyRateLimit()) return;
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    setTrashError('');
+
+    // The trashed rows are the source of truth here, not the live lists, so a restore
+    // still works if the parent is itself still in the trash.
+    const bundle = collectSubtree(rootGroupId, trashedGroups, trashedQuizzes);
+    if (bundle.folders.length === 0) return;
+
+    const folderIds = bundle.folders.map(f => f.id);
+    const quizIds = bundle.quizzes.map(q => q.id);
+
+    if (isSupabaseReady) {
+      try {
+        if (folderIds.length) {
+          const { error } = await supabaseRef.current
+            .from('groups')
+            .update({ deleted_at: null })
+            .in('id', folderIds)
+            .not('deleted_at', 'is', null);
+          if (error) throw error;
+        }
+        if (quizIds.length) {
+          const { error } = await supabaseRef.current
+            .from('quizzes')
+            .update({ deleted_at: null })
+            .in('id', quizIds)
+            .not('deleted_at', 'is', null);
+          if (error) throw error;
+        }
+      } catch (err) {
+        console.error("Failed to restore folder:", err);
+        setTrashError('Nothing was restored (' + (err?.message || 'unknown error') + '). The item is still in the trash.');
+        return;
+      }
+    }
+
+    const folderIdSet = new Set(folderIds.map(idKey));
+    setTrashedGroups(prev => prev.filter(g => !folderIdSet.has(idKey(g.id))));
+    setTrashedQuizzes(prev => prev.filter(q => {
+      const key = idKey(q.group_id);
+      return key === null || !folderIdSet.has(key);
+    }));
+    setGroups(prev => [...bundle.folders.map(g => ({ ...g, deleted_at: null })), ...prev]);
+    setQuizzes(prev => [...bundle.quizzes.map(q => ({ ...q, deleted_at: null })), ...prev]);
+    saveTrashToLocal(
+      trashedGroups.filter(g => !folderIdSet.has(idKey(g.id))),
+      trashedQuizzes.filter(q => { const key = idKey(q.group_id); return key === null || !folderIdSet.has(key); })
+    );
+  }, [isSupabaseLoaded, trashedGroups, trashedQuizzes, verifyRateLimit]);
+
+  // Bring a single trashed assessment back.
+  const restoreQuizFromTrash = useCallback(async (quizId) => {
+    if (!verifyRateLimit()) return;
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    setTrashError('');
+
+    const target = trashedQuizzes.find(q => idKey(q.id) === idKey(quizId));
+    if (!target) return;
+
     if (isSupabaseReady) {
       try {
         const { error } = await supabaseRef.current
-          .from('groups')
-          .delete()
-          .eq('id', gId);
+          .from('quizzes')
+          .update({ deleted_at: null })
+          .eq('id', target.id)
+          .not('deleted_at', 'is', null);
         if (error) throw error;
-        setGroups(groups.filter(g => g.id !== gId));
-        setQuizzes(quizzes.filter(q => q.group_id !== gId));
       } catch (err) {
-        console.error("Cloud folder deletion failed:", err);
-      }
-    } else {
-      const updated = groups.filter(g => g.id !== gId);
-      const updatedQuizzes = quizzes.filter(q => q.group_id !== gId);
-      setGroups(updated);
-      setQuizzes(updatedQuizzes);
-      saveLocalFallback(updatedQuizzes, updated, null);
-    }
-  }, [isSupabaseLoaded, groups, quizzes, trashItems, trashColumnSupported, verifyRateLimit]);
-
-  // Put a trashed entry back where it came from, re-inserting ids so any folder structure
-  // and quiz references inside the bundle survive intact.
-  const restoreFromTrash = useCallback(async (entryId) => {
-    const entry = trashItems.find(t => t.id === entryId);
-    if (!entry) return;
-    if (!verifyRateLimit()) return;
-
-    setTrashError('');
-
-    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
-    const cloudBacked = isSupabaseReady && trashColumnSupported === true;
-    const folders = entry.payload?.folders || [];
-    const trashedQuizzes = entry.payload?.quizzes || [];
-
-    // Only restore folders whose parent is either already live or part of this same bundle,
-    // otherwise a restore would rebuild a subtree hanging off a missing parent.
-    const bundleGroupIds = new Set(folders.map(f => idKey(f.id)));
-    const liveGroupIds = new Set(groups.map(g => idKey(g.id)));
-    const restorableFolders = folders.filter(f => {
-      const parentKey = idKey(f.parent_id);
-      if (parentKey === null) return true;
-      return liveGroupIds.has(parentKey) || bundleGroupIds.has(parentKey);
-    });
-
-    // A quiz is restorable if its folder is coming back with it OR if that folder is still
-    // live. Deleting a quiz never removes its folder, so a single-quiz restore usually has a
-    // live parent — requiring the parent to be in the bundle dropped those quizzes entirely.
-    const acceptedGroupIds = new Set([...liveGroupIds, ...restorableFolders.map(f => idKey(f.id))]);
-    const restorableQuizzes = trashedQuizzes.filter(q => {
-      const key = idKey(q.group_id);
-      return key === null || acceptedGroupIds.has(key);
-    });
-
-    const updatedGroups = [...groups, ...restorableFolders];
-    const updatedQuizzes = [...quizzes, ...restorableQuizzes];
-
-    // Write to the cloud BEFORE dropping the trash entry, so a rejected write leaves the item
-    // recoverable instead of silently destroying it.
-    if (cloudBacked) {
-      try {
-        // Upsert, not insert. If an earlier delete was rejected by RLS the row is still in the
-        // database, and a plain insert would fail on the primary key and make the item
-        // permanently unrestorable. Upsert heals that case and makes restore safe to retry.
-        if (restorableFolders.length) {
-          const { error } = await supabaseRef.current
-            .from('groups').upsert(restorableFolders, { onConflict: 'id' });
-          if (error) throw error;
-        }
-        if (restorableQuizzes.length) {
-          const { error } = await supabaseRef.current
-            .from('quizzes').upsert(restorableQuizzes, { onConflict: 'id' });
-          if (error) throw error;
-        }
-      } catch (err) {
-        console.error("Failed to restore to cloud:", err);
-        setTrashError(
-          'Restore rejected by the database: ' + (err?.message || 'unknown error') +
-          '. The item is still in the trash. If this is a permissions error, run the admin INSERT policies for `groups` and `quizzes` from trash_system_update.sql.'
-        );
+        console.error("Failed to restore assessment:", err);
+        setTrashError('Nothing was restored (' + (err?.message || 'unknown error') + '). The item is still in the trash.');
         return;
       }
+    }
 
+    const restored = { ...target, deleted_at: null };
+    setTrashedQuizzes(prev => prev.filter(q => idKey(q.id) !== idKey(target.id)));
+    setQuizzes(prev => [restored, ...prev]);
+    saveTrashToLocal(trashedGroups, trashedQuizzes.filter(q => idKey(q.id) !== idKey(target.id)));
+  }, [isSupabaseLoaded, trashedGroups, trashedQuizzes, verifyRateLimit]);
+
+  // The only irreversible action in the app: actually remove a row from the database.
+  const purgeTrashItem = useCallback(async (rootGroupId) => {
+    if (!verifyRateLimit()) return;
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    setTrashError('');
+
+    const bundle = collectSubtree(rootGroupId, trashedGroups, trashedQuizzes);
+    if (bundle.folders.length === 0) return;
+
+    const folderIds = bundle.folders.map(f => f.id);
+    const quizIds = bundle.quizzes.map(q => q.id);
+
+    if (isSupabaseReady) {
       try {
-        const { error } = await supabaseRef.current
-          .from('trash_items')
-          .delete()
-          .eq('id', entryId);
-        if (error) throw error;
+        if (quizIds.length) {
+          const { error } = await supabaseRef.current.from('quizzes').delete().in('id', quizIds);
+          if (error) throw error;
+        }
+        // Children before parents, so the self-referencing foreign key never blocks us.
+        const ordered = [...folderIds].reverse();
+        for (const id of ordered) {
+          const { error } = await supabaseRef.current.from('groups').delete().eq('id', id);
+          if (error) throw error;
+        }
       } catch (err) {
-        console.error("Failed to remove trash record:", err);
+        console.error("Failed to permanently delete folder:", err);
+        setTrashError('Could not delete permanently (' + (err?.message || 'unknown error') + '). The item is still in the trash.');
+        return;
       }
     }
 
-    const nextTrash = trashItems.filter(t => t.id !== entryId);
-    setTrashItems(nextTrash);
-    setGroups(updatedGroups);
-    setQuizzes(updatedQuizzes);
-    saveLocalFallback(updatedQuizzes, updatedGroups, null, nextTrash);
-  }, [isSupabaseLoaded, groups, quizzes, trashItems, trashColumnSupported, verifyRateLimit]);
+    const folderIdSet = new Set(folderIds.map(idKey));
+    setTrashedGroups(prev => prev.filter(g => !folderIdSet.has(idKey(g.id))));
+    setTrashedQuizzes(prev => prev.filter(q => {
+      const key = idKey(q.group_id);
+      return key === null || !folderIdSet.has(key);
+    }));
+    saveTrashToLocal(
+      trashedGroups.filter(g => !folderIdSet.has(idKey(g.id))),
+      trashedQuizzes.filter(q => { const key = idKey(q.group_id); return key === null || !folderIdSet.has(key); })
+    );
+  }, [isSupabaseLoaded, trashedGroups, trashedQuizzes, verifyRateLimit]);
 
-  // Irreversible: drop one entry and destroy the underlying rows for good.
-  const purgeTrashItem = useCallback(async (entryId) => {
-    const entry = trashItems.find(t => t.id === entryId);
-    if (!entry) return;
+  const purgeQuizFromTrash = useCallback(async (quizId) => {
     if (!verifyRateLimit()) return;
-
-    const nextTrash = trashItems.filter(t => t.id !== entryId);
-    setTrashItems(nextTrash);
-    saveLocalFallback(null, null, null, nextTrash);
-
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
-    if (!isSupabaseReady) return;
-    try {
-      await supabaseRef.current.from('trash_items').delete().eq('id', entryId);
-    } catch (err) {
-      console.error("Failed to purge trash record:", err);
-    }
-  }, [isSupabaseLoaded, trashItems, verifyRateLimit]);
+    setTrashError('');
 
-  // Clear the whole bin in one shot. The live tables were already updated when the items
-  // were moved here, so this only has to discard the stored bundles.
+    const target = trashedQuizzes.find(q => idKey(q.id) === idKey(quizId));
+    if (!target) return;
+
+    if (isSupabaseReady) {
+      try {
+        const { error } = await supabaseRef.current.from('quizzes').delete().eq('id', target.id);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to permanently delete assessment:", err);
+        setTrashError('Could not delete permanently (' + (err?.message || 'unknown error') + '). The item is still in the trash.');
+        return;
+      }
+    }
+
+    const nextTrashed = trashedQuizzes.filter(q => idKey(q.id) !== idKey(target.id));
+    setTrashedQuizzes(nextTrashed);
+    saveTrashToLocal(trashedGroups, nextTrashed);
+  }, [isSupabaseLoaded, trashedGroups, trashedQuizzes, verifyRateLimit]);
+
   const emptyTrash = useCallback(async () => {
     if (!verifyRateLimit()) return;
-    setTrashItems([]);
-    saveLocalFallback(null, null, null, []);
+    const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
+    setTrashError('');
 
-    if (!isSupabaseLoaded || !supabaseRef.current) return;
-    try {
-      const { error } = await supabaseRef.current.from('trash_items').delete().neq('id', '');
-      if (error) throw error;
-    } catch (err) {
-      console.error("Failed to empty trash:", err);
+    if (isSupabaseReady) {
+      try {
+        if (trashedQuizzes.length) {
+          const { error } = await supabaseRef.current.from('quizzes').delete().not('deleted_at', 'is', null);
+          if (error) throw error;
+        }
+        // Deepest first so a parent never outlives its children.
+        const ordered = [...trashedGroups].sort((a, b) => depthOf(b, trashedGroups) - depthOf(a, trashedGroups));
+        for (const g of ordered) {
+          const { error } = await supabaseRef.current.from('groups').delete().eq('id', g.id);
+          if (error) throw error;
+        }
+      } catch (err) {
+        console.error("Failed to empty trash:", err);
+        setTrashError('Could not empty the trash (' + (err?.message || 'unknown error') + '). Nothing was removed.');
+        return;
+      }
     }
-  }, [isSupabaseLoaded, verifyRateLimit]);
+
+    setTrashedGroups([]);
+    setTrashedQuizzes([]);
+    saveTrashToLocal([], []);
+  }, [isSupabaseLoaded, trashedGroups, trashedQuizzes, verifyRateLimit]);
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
@@ -1158,93 +1203,41 @@ The JSON must exactly follow this schema:
   const deleteQuiz = useCallback(async (id) => {
     if (!verifyRateLimit()) return;
     const isSupabaseReady = isSupabaseLoaded && !!supabaseRef.current;
-    const useTrash = !isSupabaseReady || trashColumnSupported === true;
-    const target = quizzes.find(q => q.id === id);
-    if (!target) return;
+    setTrashError('');
 
-    if (useTrash) {
-      setTrashError('');
-      const entry = {
-        id: 'trash_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 7),
-        kind: 'quiz',
-        label: target.quiz_title || 'Untitled Assessment',
-        deleted_at: new Date().toISOString(),
-        payload: { folders: [], quizzes: [target] }
-      };
-
-      const nextTrash = [entry, ...trashItems];
-      setTrashItems(nextTrash);
-      saveLocalFallback(null, null, null, nextTrash);
-
-      if (isSupabaseReady && trashColumnSupported === true) {
-        try {
-          const { error } = await supabaseRef.current
-            .from('trash_items')
-            .insert([{
-              id: entry.id,
-              kind: entry.kind,
-              label: entry.label,
-              deleted_at: entry.deleted_at,
-              payload: entry.payload
-            }]);
-          if (error) throw error;
-        } catch (err) {
-          // Refuse to delete: without a stored bundle the assessment would be unrecoverable.
-          console.error("Failed to record assessment in trash:", err);
-          setTrashError(
-            'Delete cancelled: the assessment could not be stored in the trash (' +
-            (err?.message || 'unknown error') +
-            '). Nothing was removed. Check the admin policies on `trash_items` in trash_system_update.sql.'
-          );
-          setTrashItems(trashItems);
-          saveLocalFallback(null, null, null, trashItems);
-          return;
-        }
-      }
-
-      const updatedQuizzes = quizzes.filter(q => q.id !== id);
-      setQuizzes(updatedQuizzes);
-      saveLocalFallback(updatedQuizzes, null, null, nextTrash);
-
-      if (isSupabaseReady) {
-        try {
-          const { error } = await supabaseRef.current
-            .from('quizzes')
-            .delete()
-            .eq('id', id);
-          if (error) throw error;
-        } catch (err) {
-          console.error("Cloud assessment removal failed:", err);
-        }
-      }
-
-      // Keep the student's progress so a restore brings back the attempt history too.
+    if (isSupabaseReady && !softDeleteSupported.current) {
+      setTrashError('Deletion is unavailable: the deleted_at column is missing. Run admin_and_soft_delete.sql in Supabase, then reload.');
       return;
     }
 
-    // Hard delete (trash table unavailable).
+    const target = quizzes.find(q => idKey(q.id) === idKey(id));
+    if (!target) return;
+
+    const stamp = new Date().toISOString();
+
     if (isSupabaseReady) {
       try {
         const { error } = await supabaseRef.current
           .from('quizzes')
-          .delete()
-          .eq('id', id);
+          .update({ deleted_at: stamp })
+          .eq('id', target.id)
+          .is('deleted_at', null);
         if (error) throw error;
-        setQuizzes(quizzes.filter(q => q.id !== id));
       } catch (err) {
-        console.error("Failed to delete exam:", err);
+        console.error("Failed to mark assessment as deleted:", err);
+        setTrashError('Nothing was deleted (' + (err?.message || 'unknown error') + '). Check that deleted_at exists and the admin UPDATE policies allow is_admin().');
+        return;
       }
-    } else {
-      const updatedQuizzes = quizzes.filter(q => q.id !== id);
-      setQuizzes(updatedQuizzes);
-      saveLocalFallback(updatedQuizzes, null, null);
-      
-      const newStates = { ...quizStates };
-      delete newStates[id];
-      setQuizStates(newStates);
-      saveLocalFallback(null, null, newStates);
     }
-  }, [isSupabaseLoaded, quizzes, quizStates, trashItems, trashColumnSupported, verifyRateLimit]);
+
+    // Student progress is deliberately left alone: the row is only marked, so a restore
+    // brings back the attempt history as well as the assessment.
+    const updatedQuizzes = quizzes.filter(q => idKey(q.id) !== idKey(id));
+    setQuizzes(updatedQuizzes);
+    setTrashedQuizzes(prev => [{ ...target, deleted_at: target.deleted_at || stamp }, ...prev]);
+    saveLocalFallback(updatedQuizzes, null, null);
+    saveTrashToLocal(trashedGroups, [{ ...target, deleted_at: target.deleted_at || stamp }, ...trashedQuizzes]);
+  }, [isSupabaseLoaded, quizzes, trashedGroups, trashedQuizzes, verifyRateLimit]);
 
   const updatePersistentState = useCallback(async (quizId, updatedProgress) => {
     const nextStates = {
@@ -1721,7 +1714,7 @@ The JSON must exactly follow this schema:
     incorrect.forEach((item, idx) => {
       const q = item.question;
 
-      // Essay nodes have no options or picked choice — report the concealed model answer instead.
+      // Essay nodes have no options or picked choice â€” report the concealed model answer instead.
       if (item.isEssay) {
         content += `Mistake #${idx + 1} (Question #${item.index + 1}) - ESSAY\n`;
         content += `Question: ${q.question}\n`;
@@ -1772,7 +1765,7 @@ The JSON must exactly follow this schema:
         const marker = o.isCorrect 
           ? `[Correct Answer]` 
           : (o.id === item.selectedOptionId ? `[Your Choice]` : `[Option]`);
-        content += `  • ${o.id}. ${o.text} ${marker}\n`;
+        content += `  â€¢ ${o.id}. ${o.text} ${marker}\n`;
         if (o.explanation) {
           content += `    Explanation: ${o.explanation}\n`;
         }
@@ -1892,7 +1885,7 @@ The JSON must exactly follow this schema:
                   title="Restore deleted folders and assessments"
                   className="flex items-center gap-2 px-4 py-2 border border-slate-400/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-md text-slate-500 dark:text-slate-400 hover:bg-slate-500/10 hover:text-slate-700 dark:hover:text-slate-200 transition-all duration-300 rounded-lg text-sm font-semibold"
                 >
-                  <Trash2 className="w-4 h-4" /> Trash ({trashItems.length})
+                  <Trash2 className="w-4 h-4" /> Trash ({trashedGroups.length + trashedQuizzes.length})
                 </button>
                 <button 
                   onClick={handleCreateBlankQuiz}
@@ -2137,7 +2130,7 @@ The JSON must exactly follow this schema:
                           </span>
                           {isStarted && (
                             <>
-                              <span className="text-slate-400 text-xs">•</span>
+                              <span className="text-slate-400 text-xs">â€¢</span>
                               <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md ${isCompleted ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'}`}>
                                 {isCompleted ? <Award className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
                                 {isCompleted ? 'Completed' : `In Progress (${answeredCount}/${quiz.questions.length})`}
@@ -2465,7 +2458,7 @@ The JSON must exactly follow this schema:
                             qs[qIdx].explanation = e.target.value;
                             setEditedQuizData({ ...editedQuizData, questions: qs });
                           }}
-                          placeholder="Extra guidance shown after the answer is revealed — key points to include, common pitfalls."
+                          placeholder="Extra guidance shown after the answer is revealed â€” key points to include, common pitfalls."
                           className="w-full px-4 py-2 border border-[#C5A059]/20 rounded-xl bg-white/20 dark:bg-slate-950/40 focus:outline-none focus:border-[#D4AF37] text-xs font-medium leading-relaxed"
                           rows="3"
                         />
@@ -2871,7 +2864,7 @@ The JSON must exactly follow this schema:
                   key={idx}
                   onClick={() => handleJumpToQuestion(idx)}
                   className={`shrink-0 w-11 h-11 flex items-center justify-center rounded-xl border text-sm cursor-pointer transition-all duration-300 relative ${borderClass} ${bgClass} ${textClass} ${activeIndicator}`}
-                  title={`Question ${idx + 1}${nodeIsEssay ? ' (Essay — self-graded)' : ''}`}
+                  title={`Question ${idx + 1}${nodeIsEssay ? ' (Essay â€” self-graded)' : ''}`}
                 >
                   {idx + 1}
                   {nodeIsEssay && (
@@ -2938,7 +2931,7 @@ The JSON must exactly follow this schema:
                     </h4>
                     <p className="text-sm dark:text-slate-400 text-slate-600 leading-relaxed font-medium max-w-lg mx-auto mb-6">
                       Write your answer out on paper first, then reveal the model answer and judge
-                      your own work. There is nothing to type here — revealing locks your verdict in.
+                      your own work. There is nothing to type here â€” revealing locks your verdict in.
                     </p>
                     <button
                       onClick={revealEssayAnswer}
@@ -3129,7 +3122,7 @@ The JSON must exactly follow this schema:
                     <span>Uncertainty Toggler</span>
                   </div>
                   <div className="flex items-center gap-1.5 font-mono">
-                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">â† / â†’</span>
                     <span>Slide Navigate</span>
                   </div>
                 </>
@@ -3144,7 +3137,7 @@ The JSON must exactly follow this schema:
                     <span>Uncertainty Toggler</span>
                   </div>
                   <div className="flex items-center gap-1.5 font-mono">
-                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">← / →</span>
+                    <span className="bg-[#C5A059]/10 border border-[#C5A059]/30 px-1.5 py-0.5 rounded text-[9px]">â† / â†’</span>
                     <span>Slide Navigate</span>
                   </div>
                 </>
@@ -3470,144 +3463,146 @@ The JSON must exactly follow this schema:
 
   const renderTrash = () => {
     if (!isAdmin) return null;
-    const folderCount = trashItems.reduce((n, t) => n + (t.payload?.folders?.length || 0), 0);
-    const quizCount = trashItems.reduce((n, t) => n + (t.payload?.quizzes?.length || 0), 0);
+
+    // Only the top of each trashed branch is listed. A child whose parent is also in
+    // the trash is restored and deleted as part of its parent's entry, so listing it
+    // separately would offer the same content twice and invite double handling.
+    const trashedGroupKeys = new Set(trashedGroups.map(g => idKey(g.id)));
+    const rootTrashedGroups = trashedGroups.filter(g => {
+      const parentKey = idKey(g.parent_id);
+      return parentKey === null || !trashedGroupKeys.has(parentKey);
+    });
+    const standaloneQuizzes = trashedQuizzes.filter(q => {
+      const key = idKey(q.group_id);
+      return key === null || !trashedGroupKeys.has(key);
+    });
+
+    const totalItems = rootTrashedGroups.length + standaloneQuizzes.length;
+    const isEmpty = totalItems === 0;
+
+    const formatWhen = (iso) => {
+      if (!iso) return 'unknown date';
+      try {
+        return new Date(iso).toLocaleString(undefined, {
+          day: 'numeric', month: 'short', year: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        });
+      } catch {
+        return iso;
+      }
+    };
+
+    const describeFolder = (g) => {
+      const bundle = collectSubtree(g.id, trashedGroups, trashedQuizzes);
+      const extraFolders = bundle.folders.length - 1;
+      return [
+        extraFolders > 0 ? `${extraFolders} nested folder${extraFolders === 1 ? '' : 's'}` : null,
+        bundle.quizzes.length > 0 ? `${bundle.quizzes.length} assessment${bundle.quizzes.length === 1 ? '' : 's'}` : null
+      ].filter(Boolean).join(', ') || 'Empty folder';
+    };
 
     return (
-      <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
-        <div>
-          <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
-            <ChevronLeft className="w-4 h-4" /> Back to Dashboard
-          </button>
-
-          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] via-[#D4AF37] to-[#C5A059]"></div>
-
-            <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-6">
-              <div>
-                <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-2 flex items-center gap-3 font-bold">
-                  <Trash2 className="w-6 h-6 text-[#C5A059]" /> Trash
-                </h2>
-                <p className="text-xs dark:text-slate-400 text-slate-500 font-semibold">
-                  Deleted folders and assessments are kept here and can be restored. They stay
-                  recoverable until you empty the trash.
-                </p>
-              </div>
-            {trashError && (
-              <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/25 text-rose-600 dark:text-rose-400 rounded-xl flex items-start gap-3 animate-fade-in">
-                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-                <p className="text-sm font-semibold leading-relaxed">{trashError}</p>
-              </div>
-            )}
-
-            {trashItems.length > 0 && (
-                <button
-                  onClick={() => {
-                    showConfirm(
-                      "Empty Trash",
-                      "Permanently destroy every item in the trash? This cannot be undone and no restore will be possible.",
-                      () => emptyTrash()
-                    );
-                  }}
-                  className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl transition-all duration-300 font-bold text-xs"
-                >
-                  <Trash2 className="w-4 h-4" /> Empty Trash
-                </button>
-              )}
-            </div>
-
-            {trashItems.length > 0 && (
-              <div className="flex flex-wrap gap-2.5 mb-6">
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider dark:text-slate-300 text-slate-500 bg-[#C5A059]/10 px-2.5 py-1 rounded-md">
-                  <Folder className="w-3.5 h-3.5 text-[#C5A059]" /> {folderCount} Folders
-                </span>
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider dark:text-slate-300 text-slate-500 bg-[#C5A059]/10 px-2.5 py-1 rounded-md">
-                  <BookOpen className="w-3.5 h-3.5 text-[#C5A059]" /> {quizCount} Assessments
-                </span>
-              </div>
-            )}
-
-            {trashItems.length === 0 ? (
-              <div className="text-center py-14 bg-[#C5A059]/5 rounded-xl border border-[#C5A059]/15">
-                <Trash2 className="w-10 h-10 mx-auto text-[#C5A059] opacity-40 mb-3" />
-                <p className="dark:text-slate-300 text-slate-600 font-bold text-sm">The trash is empty.</p>
-                <p className="text-slate-400 text-xs mt-1">Deleted items will appear here, ready to be restored.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {trashItems.map(entry => {
-                  const folders = entry.payload?.folders?.length || 0;
-                  const quizzes = entry.payload?.quizzes?.length || 0;
-                  return (
-                    <div
-                      key={entry.id}
-                      className="p-5 rounded-xl border border-[#C5A059]/20 bg-white/30 dark:bg-slate-900/30 flex flex-col md:flex-row gap-4 justify-between items-start"
-                    >
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className={`p-2 rounded-lg shrink-0 ${
-                          entry.kind === 'folder'
-                            ? 'bg-[#C5A059]/10 text-[#C5A059]'
-                            : 'bg-emerald-500/10 text-emerald-500'
-                        }`}>
-                          {entry.kind === 'folder' ? <Folder className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
-                        </div>
-                        <div className="min-w-0">
-                          <h3 className="font-serif dark:text-slate-100 text-slate-800 font-bold truncate">{makeTrashLabel(entry)}</h3>
-                          <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                            <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-[#C5A059]/10 text-[#C5A059] tracking-wider">
-                              {entry.kind === 'folder' ? 'Folder' : 'Assessment'}
-                            </span>
-                            {folders > 0 && (
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                                {folders} folder{folders === 1 ? '' : 's'}
-                              </span>
-                            )}
-                            {quizzes > 0 && (
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                                {quizzes} assessment{quizzes === 1 ? '' : 's'}
-                              </span>
-                            )}
-                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">
-                              Deleted {new Date(entry.deleted_at).toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => {
-                            showConfirm(
-                              "Restore Item",
-                              `Restore "${makeTrashLabel(entry)}" back to where it came from?`,
-                              () => restoreFromTrash(entry.id)
-                            );
-                          }}
-                          className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 rounded-xl transition-all duration-300 font-bold text-xs"
-                        >
-                          <Undo className="w-3.5 h-3.5" /> Restore
-                        </button>
-                        <button
-                          onClick={() => {
-                            showConfirm(
-                              "Delete Forever",
-                              `Permanently destroy "${makeTrashLabel(entry)}"? There will be no way to recover it.`,
-                              () => purgeTrashItem(entry.id)
-                            );
-                          }}
-                          title="Delete permanently"
-                          className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl transition-all duration-300"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+      <div className="animate-fade-in">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-serif font-bold text-slate-800 dark:text-white">Trash</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+              {isEmpty
+                ? 'Nothing has been deleted.'
+                : `${totalItems} item${totalItems === 1 ? '' : 's'} kept until you remove them for good.`}
+            </p>
           </div>
+          {!isEmpty && (
+            <button
+              onClick={() => showConfirm(
+                'Empty the trash?',
+                'Every item in the trash will be permanently deleted from the database. This cannot be undone.',
+                emptyTrash
+              )}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/25 text-sm font-semibold transition-colors"
+            >
+              <Trash2 className="w-4 h-4" /> Empty trash
+            </button>
+          )}
         </div>
+
+        {trashError && (
+          <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/25 text-rose-600 dark:text-rose-400 rounded-xl flex items-start gap-3 animate-fade-in">
+            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            <p className="text-sm font-semibold leading-relaxed">{trashError}</p>
+          </div>
+        )}
+
+        {isEmpty ? (
+          <div className="text-center py-20 border-2 border-dashed border-[#C5A059]/20 rounded-3xl">
+            <Trash2 className="w-12 h-12 mx-auto mb-4 text-slate-300 dark:text-slate-600" />
+            <p className="text-slate-400 dark:text-slate-500 font-medium">The trash is empty.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rootTrashedGroups.map(g => (
+              <div key={'trash-folder-' + idKey(g.id)} className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md border border-[#C5A059]/20 rounded-2xl p-5 flex items-center gap-4">
+                <div className="w-11 h-11 rounded-xl bg-[#C5A059]/10 flex items-center justify-center flex-shrink-0">
+                  <Folder className="w-5 h-5 text-[#C5A059]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-slate-800 dark:text-white truncate">{g.name}</p>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#C5A059]/15 text-[#C5A059]">Folder</span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {describeFolder(g)} &middot; deleted {formatWhen(g.deleted_at)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => showConfirm('Restore this folder?', `“${g.name}” and everything inside it will return to where it was.`, () => restoreFolderFromTrash(g.id))}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#C5A059]/10 hover:bg-[#C5A059]/20 text-[#C5A059] border border-[#C5A059]/25 text-sm font-semibold transition-colors"
+                  >
+                    <RotateCcw className="w-4 h-4" /> Restore
+                  </button>
+                  <button
+                    onClick={() => showConfirm('Delete permanently?', `“${g.name}” and everything inside it will be destroyed for good. This cannot be undone.`, () => purgeTrashItem(g.id))}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/25 text-sm font-semibold transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete forever
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {standaloneQuizzes.map(q => (
+              <div key={'trash-quiz-' + idKey(q.id)} className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md border border-[#C5A059]/20 rounded-2xl p-5 flex items-center gap-4">
+                <div className="w-11 h-11 rounded-xl bg-[#C5A059]/10 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-5 h-5 text-[#C5A059]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-slate-800 dark:text-white truncate">{q.quiz_title || 'Untitled Assessment'}</p>
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#C5A059]/15 text-[#C5A059]">Assessment</span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {Array.isArray(q.questions) ? q.questions.length : 0} question{(Array.isArray(q.questions) ? q.questions.length : 0) === 1 ? '' : 's'} &middot; deleted {formatWhen(q.deleted_at)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => showConfirm('Restore this assessment?', `“${q.quiz_title || 'Untitled Assessment'}” will return to where it was.`, () => restoreQuizFromTrash(q.id))}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#C5A059]/10 hover:bg-[#C5A059]/20 text-[#C5A059] border border-[#C5A059]/25 text-sm font-semibold transition-colors"
+                  >
+                    <RotateCcw className="w-4 h-4" /> Restore
+                  </button>
+                  <button
+                    onClick={() => showConfirm('Delete permanently?', `“${q.quiz_title || 'Untitled Assessment'}” will be destroyed for good. This cannot be undone.`, () => purgeQuizFromTrash(q.id))}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/25 text-sm font-semibold transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete forever
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {renderSignatureFooter()}
       </div>
     );
@@ -3923,7 +3918,7 @@ The JSON must exactly follow this schema:
                     value={adminPasswordInput}
                     onChange={(e) => setAdminPasswordInput(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 dark:border-slate-800 focus:outline-none focus:ring-1 focus:ring-[#D4AF37] text-sm font-medium"
-                    placeholder="••••••••••••"
+                    placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                   />
                 </div>
               </div>
