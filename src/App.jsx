@@ -2347,7 +2347,7 @@ The JSON must exactly follow this schema:
               />
             </div>
 
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
               <h3 className="font-serif font-bold text-lg text-slate-800 dark:text-slate-200 flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-[#C5A059]" /> Questions ({editedQuizData.questions.length})
               </h3>
@@ -2380,7 +2380,7 @@ The JSON must exactly follow this schema:
                   </button>
 
                   <div>
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                       <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono">
                         Question {qIdx + 1} Text
                       </label>
@@ -2414,7 +2414,7 @@ The JSON must exactly follow this schema:
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5 font-mono flex items-center gap-1">
                       <ImageIcon className="w-3.5 h-3.5" /> Image URL (Optional)
                     </label>
-                    <div className="flex gap-2 items-center mt-1.5">
+                    <div className="flex flex-wrap gap-2 items-center mt-1.5">
                       <input 
                         type="text" 
                         value={q.imageUrl || ''}
@@ -2425,7 +2425,7 @@ The JSON must exactly follow this schema:
                         }}
                         onPaste={(e) => handlePaste(e, qIdx)}
                         placeholder="Paste image URL here, or Ctrl+V image file"
-                        className="flex-grow px-4 py-2 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 bg-white/20 text-sm focus:outline-none focus:border-[#D4AF37]"
+                        className="flex-grow min-w-0 px-4 py-2 border border-[#C5A059]/25 rounded-xl dark:bg-slate-950 bg-white/20 text-sm focus:outline-none focus:border-[#D4AF37]"
                       />
                       <label className="flex items-center gap-1.5 px-3 py-2 bg-[#C5A059]/10 text-[#C5A059] hover:bg-[#C5A059]/25 border border-[#C5A059]/30 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap">
                         <Upload className="w-3.5 h-3.5" />
@@ -2617,7 +2617,7 @@ The JSON must exactly follow this schema:
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-xs bg-[#C5A059]/5 border border-[#C5A059]/20 p-4 rounded-xl font-mono text-slate-600 dark:text-slate-300">
             <div>
               <span className="font-bold text-[#D4AF37]">Single Quiz Syntax:</span>
-              <pre className="mt-1 opacity-80 text-[10px]">
+              <pre className="mt-1 opacity-80 text-[10px] whitespace-pre-wrap break-words">
 {`{
   "quizTitle": "Lecture Title",
   "questions": [...]
@@ -2626,7 +2626,7 @@ The JSON must exactly follow this schema:
             </div>
             <div>
               <span className="font-bold text-[#D4AF37]">Bulk Quizzes Syntax:</span>
-              <pre className="mt-1 opacity-80 text-[10px]">
+              <pre className="mt-1 opacity-80 text-[10px] whitespace-pre-wrap break-words">
 {`{
   "quizzes": {
     "Lecture 1": { "quizTitle": "...", "questions": [...] },
@@ -2797,7 +2797,7 @@ The JSON must exactly follow this schema:
     return (
       <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
         <div>
-          <div className="flex flex-row justify-between items-center mb-6">
+          <div className="flex flex-row flex-wrap justify-between items-center gap-2 mb-6">
             <button 
               onClick={resetToDashboard} 
               className="flex items-center gap-2 dark:text-slate-400 text-slate-600 hover:text-[#D4AF37] transition-all duration-300 text-xs px-3.5 py-2 border border-[#C5A059]/25 bg-white/40 dark:bg-slate-900/40 rounded-lg font-bold shadow-sm backdrop-blur-md"
@@ -2948,8 +2948,13 @@ The JSON must exactly follow this schema:
               <div className="mb-8 flex justify-center bg-white/10 dark:bg-slate-900/20 p-2 rounded-xl border border-[#C5A059]/10">
                 <img 
                   src={currentQ.imageUrl} 
-                  alt="Question figure" 
-                  className="max-h-80 w-auto object-contain rounded-lg shadow-sm"
+                  alt="Question figure"
+                  loading="lazy"
+                  decoding="async"
+                  // max-w-full is required alongside max-h-80: constraining only the
+                  // height of an auto-width replaced element scales the width up
+                  // proportionally, pushing wide figures past the card edge on phones.
+                  className="max-h-80 max-w-full w-auto h-auto object-contain rounded-lg shadow-sm"
                 />
               </div>
             )}
@@ -3537,7 +3542,7 @@ The JSON must exactly follow this schema:
     };
 
     return (
-      <div className="animate-fade-in">
+      <div className="w-full max-w-5xl mx-auto px-4 animate-fade-in">
         <button
           onClick={goBack}
           className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-6 transition-colors duration-300 font-bold text-sm"
@@ -3758,7 +3763,11 @@ The JSON must exactly follow this schema:
   };
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 font-sans selection:bg-[#C5A059]/30 ${theme === 'dark' ? 'dark bg-[#0B0F19] text-slate-100' : 'bg-[#FAF8F5] text-slate-900'}`}>
+    // `relative` gives the two decorative glows below a positioned ancestor so they no
+    // longer resolve against the viewport, and `overflow-x-clip` guarantees no child can
+    // ever widen the document again. `clip` rather than `hidden` so it does not create a
+    // scroll container or break position: sticky.
+    <div className={`relative overflow-x-clip min-h-screen transition-colors duration-300 font-sans selection:bg-[#C5A059]/30 ${theme === 'dark' ? 'dark bg-[#0B0F19] text-slate-100' : 'bg-[#FAF8F5] text-slate-900'}`}>
       <style dangerouslySetInnerHTML={{__html: `
         .animate-fade-in {
           animation: fadeIn 0.3s ease-out forwards;
@@ -3783,9 +3792,12 @@ The JSON must exactly follow this schema:
         }
       `}} />
 
-      {/* Dynamic Glowing background nodes for luxury glass feel */}
-      <div className="absolute top-10 left-1/4 w-[500px] h-[500px] bg-[#C5A059]/5 rounded-full blur-3xl pointer-events-none"></div>
-      <div className="absolute bottom-20 right-1/4 w-[400px] h-[400px] bg-[#D4AF37]/5 rounded-full blur-3xl pointer-events-none"></div>
+      {/* Dynamic Glowing background nodes for luxury glass feel. Hidden below md: at
+          500px/400px with a 64px blur they were both the cause of the sideways scroll on
+          phones (left-1/4 + 500px overflowed a 360px viewport) and the single most
+          expensive thing on screen, while painting at 5% alpha over a flat background. */}
+      <div className="hidden md:block absolute top-10 left-1/4 w-[500px] h-[500px] bg-[#C5A059]/5 rounded-full blur-3xl pointer-events-none"></div>
+      <div className="hidden md:block absolute bottom-20 right-1/4 w-[400px] h-[400px] bg-[#D4AF37]/5 rounded-full blur-3xl pointer-events-none"></div>
 
       <header className="w-full p-4 flex justify-end items-center max-w-5xl mx-auto gap-3 relative z-10">
         <button 
