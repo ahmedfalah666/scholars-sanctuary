@@ -1,5 +1,5 @@
 ﻿/* eslint-disable react-hooks/refs */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   BookOpen, 
   ChevronRight,
@@ -591,7 +591,11 @@ export default function App() {
     }
   }, [currentView, isAdmin, isSupabaseLoaded]);
 
-  const essaySchemaNote = `
+  // These three are ~5KB of static template text with no state references whatsoever
+  // (the only interpolation is essaySchemaNote). Built in the component body they
+  // re-ran their string concatenation on every single state change, whether or not the
+  // prompt view was open. Memoised with empty deps, so each is built once per mount.
+  const essaySchemaNote = useMemo(() => `
 
 ESSAY QUESTION SUPPORT:
 You may also include self-graded essay (long-answer) questions. A student answers these on
@@ -614,9 +618,9 @@ Rules for essay questions:
 - "answerText" is the concealed answer shown only after the student reveals it. It must stand alone.
 - "explanation" is optional examiner guidance shown alongside the answer (key points, common pitfalls).
 - Never mix the two forms: an essay question has "options": [] and no isCorrect flags.
-- Keep the same "type" key on every question of a given quiz for consistency.`;
+- Keep the same "type" key on every question of a given quiz for consistency.`, []);
 
-  const aiPrompt = `You are acting as an expert university professor and exam designer. 
+  const aiPrompt = useMemo(() => `You are acting as an expert university professor and exam designer. 
 
 I have uploaded two types of sources into this notebook:
 1. My Lecture Notes (the specific material I have been taught)
@@ -646,9 +650,9 @@ The JSON must exactly follow this schema:
       ]
     }
   ]
-}${essaySchemaNote}`;
+}${essaySchemaNote}`, [essaySchemaNote]);
 
-  const aiPromptFormat = `You are acting as an expert university professor and exam designer.
+  const aiPromptFormat = useMemo(() => `You are acting as an expert university professor and exam designer.
 
 I have uploaded an existing test or set of raw questions.
 Your task is to properly format this test into a clean JSON structure and add detailed explanations for every correct and incorrect option.
@@ -672,7 +676,7 @@ The JSON must exactly follow this schema:
       ]
     }
   ]
-}${essaySchemaNote}`;
+}${essaySchemaNote}`, [essaySchemaNote]);
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
@@ -1728,9 +1732,19 @@ The JSON must exactly follow this schema:
     return { incorrect, correctButUncertain };
   };
 
+  // computeReviewData walks every question and does an inner find over the options, then
+  // allocates two arrays of fresh objects. It used to be called directly in the review
+  // render body, so every state change in the app redid that work. Memoised on exactly
+  // the four inputs it reads.
+  const reviewData = useMemo(
+    () => computeReviewData(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeQuiz, uncertainQuestions, essayGrades, userAnswers]
+  );
+
   const downloadMistakesFile = () => {
     if (!activeQuiz) return;
-    const { incorrect } = computeReviewData();
+    const { incorrect } = reviewData;
     if (incorrect.length === 0) return;
 
     const totalQuestions = activeQuiz.questions.length;
@@ -1875,8 +1889,40 @@ The JSON must exactly follow this schema:
     return trail.length > 0 ? trail.join(" > ") : "Home Dashboard";
   };
 
-  const currentLevelGroups = groups.filter(g => g.parent_id === currentGroupId);
-  const currentLevelQuizzes = quizzes.filter(q => q.group_id === currentGroupId);
+  // Only ever read by renderDashboard, but these two scans sat in the component body,
+  // so they ran on every state change in the app - including while taking a quiz, where
+  // the results are never touched. The quizzes table carries every row's full questions
+  // JSONB, so that was a large scan per keystroke. Memoised on the inputs that matter.
+  const currentLevelGroups = useMemo(
+    () => groups.filter(g => g.parent_id === currentGroupId),
+    [groups, currentGroupId]
+  );
+  const currentLevelQuizzes = useMemo(
+    () => quizzes.filter(q => q.group_id === currentGroupId),
+    [quizzes, currentGroupId]
+  );
+
+  // renderTrash called collectSubtree once per trashed root folder, and each call ran its
+  // grow-until-stable loop over every group plus a filter over every quiz, allocating two
+  // arrays of full row objects just to read .length off them. That repeated on every
+  // render of the view, which is every state change in the app. collectSubtree itself is
+  // deliberately untouched - it tolerates cyclic parent_id chains - so this only changes
+  // how often it runs, not what it computes.
+  const trashedFolderDescriptions = useMemo(() => {
+    const descriptions = new Map();
+    trashedGroups.forEach(g => {
+      const bundle = collectSubtree(g.id, trashedGroups, trashedQuizzes);
+      const extraFolders = bundle.folders.length - 1;
+      descriptions.set(
+        idKey(g.id),
+        [
+          extraFolders > 0 ? `${extraFolders} nested folder${extraFolders === 1 ? '' : 's'}` : null,
+          bundle.quizzes.length > 0 ? `${bundle.quizzes.length} assessment${bundle.quizzes.length === 1 ? '' : 's'}` : null
+        ].filter(Boolean).join(', ') || 'Empty folder'
+      );
+    });
+    return descriptions;
+  }, [trashedGroups, trashedQuizzes]);
 
   const renderDashboard = () => (
     <div className="w-full max-w-5xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
@@ -3196,7 +3242,7 @@ The JSON must exactly follow this schema:
   };
 
   const renderReview = () => {
-    const { incorrect, correctButUncertain } = computeReviewData();
+    const { incorrect, correctButUncertain } = reviewData;
     const totalQuestions = activeQuiz.questions.length;
     const score = totalQuestions - incorrect.length;
     const percentage = Math.round((score / totalQuestions) * 100);
@@ -3537,14 +3583,8 @@ The JSON must exactly follow this schema:
       }
     };
 
-    const describeFolder = (g) => {
-      const bundle = collectSubtree(g.id, trashedGroups, trashedQuizzes);
-      const extraFolders = bundle.folders.length - 1;
-      return [
-        extraFolders > 0 ? `${extraFolders} nested folder${extraFolders === 1 ? '' : 's'}` : null,
-        bundle.quizzes.length > 0 ? `${bundle.quizzes.length} assessment${bundle.quizzes.length === 1 ? '' : 's'}` : null
-      ].filter(Boolean).join(', ') || 'Empty folder';
-    };
+    // Descriptions are precomputed in a useMemo above, keyed by idKey(g.id).
+    const describeFolder = (g) => trashedFolderDescriptions.get(idKey(g.id)) || 'Empty folder';
 
     return (
       <div className="w-full max-w-5xl mx-auto px-4 animate-fade-in">
