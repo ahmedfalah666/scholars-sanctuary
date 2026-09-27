@@ -1954,8 +1954,8 @@ The JSON must exactly follow this schema:
 
         {/* Dynamic Glowing Banner Section - Rendering ONLY on main dashboard level */}
         {currentGroupId === null && (
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-[#131a2e] to-slate-950 p-8 md:p-10 mb-8 shadow-xl border border-[#C5A059]/30 backdrop-blur-lg">
-            <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-[#D4AF37]/10 to-transparent rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-[#131a2e] to-slate-950 p-8 md:p-10 mb-8 shadow-xl border border-[#C5A059]/30 backdrop-blur-lg max-md:backdrop-blur-none">
+            <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-[#D4AF37]/10 to-transparent rounded-full blur-3xl max-md:blur-xl -mr-20 -mt-20 pointer-events-none"></div>
             
             <div className="relative z-10 max-w-2xl">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#C5A059]/15 border border-[#C5A059]/35 rounded-full text-xs font-bold text-[#D4AF37] mb-4 font-mono uppercase tracking-widest">
@@ -1994,7 +1994,7 @@ The JSON must exactly follow this schema:
 
         {/* Admin actions and Folder creation bar */}
         {isAdmin && (
-          <div className="flex flex-wrap gap-2.5 mb-8 bg-[#C5A059]/5 dark:bg-slate-900/40 p-4 rounded-xl border border-[#C5A059]/20 backdrop-blur-md">
+          <div className="flex flex-wrap gap-2.5 mb-8 bg-[#C5A059]/5 dark:bg-slate-900/40 p-4 rounded-xl border border-[#C5A059]/20 backdrop-blur-md max-md:backdrop-blur-none">
             <button 
               onClick={() => setShowGroupModal(true)}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] rounded-lg transition-all duration-300 text-xs font-bold shadow-md shadow-[#D4AF37]/5"
@@ -2053,7 +2053,7 @@ The JSON must exactly follow this schema:
                 {currentLevelGroups.map(grp => (
                   <div 
                     key={grp.id}
-                    className="relative group bg-white/40 dark:bg-slate-900/40 border border-[#C5A059]/20 rounded-xl p-5 flex items-center justify-between hover:shadow-md hover:border-[#D4AF37]/50 transition-all duration-300 cursor-pointer backdrop-blur-md"
+                    className="relative group bg-white/40 dark:bg-slate-900/40 border border-[#C5A059]/20 rounded-xl p-5 flex items-center justify-between hover:shadow-md hover:border-[#D4AF37]/50 transition-[color,background-color,border-color,box-shadow] duration-300 cursor-pointer backdrop-blur-md max-md:backdrop-blur-none"
                     onClick={() => setCurrentGroupId(grp.id)}
                   >
                     <div className="flex items-center gap-4">
@@ -2094,7 +2094,7 @@ The JSON must exactly follow this schema:
             </h3>
             
             {currentLevelGroups.length === 0 && currentLevelQuizzes.length === 0 ? (
-              <div className="text-center py-20 border-2 border-dashed border-[#C5A059]/30 rounded-2xl bg-[#C5A059]/5 dark:bg-slate-900/10 px-6 max-w-xl mx-auto backdrop-blur-md">
+              <div className="text-center py-20 border-2 border-dashed border-[#C5A059]/30 rounded-2xl bg-[#C5A059]/5 dark:bg-slate-900/10 px-6 max-w-xl mx-auto backdrop-blur-md max-md:backdrop-blur-none">
                 <BookMarked className="w-12 h-12 mx-auto text-[#C5A059] mb-4" />
                 <p className="dark:text-slate-300 text-slate-600 font-serif text-lg font-bold">This classroom section is empty.</p>
                 <p className="text-slate-400 text-xs mt-1">No folders or assessments have been published inside this hierarchy.</p>
@@ -2121,12 +2121,12 @@ The JSON must exactly follow this schema:
                   const answeredCount = state?.userAnswers ? Object.keys(state.userAnswers).length : 0;
                   
                   return (
-                    <div key={quiz.id} className="group relative bg-white/40 dark:bg-slate-900/40 border border-[#C5A059]/25 p-6 rounded-2xl hover:shadow-xl hover:border-[#D4AF37]/55 transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-sm backdrop-blur-md">
+                    <div key={quiz.id} className="group relative bg-white/40 dark:bg-slate-900/40 border border-[#C5A059]/25 p-6 rounded-2xl hover:shadow-xl hover:border-[#D4AF37]/55 transition-[color,background-color,border-color,box-shadow] duration-300 flex flex-col justify-between overflow-hidden shadow-sm backdrop-blur-md max-md:backdrop-blur-none">
                       <div className="absolute top-0 left-0 w-1.5 h-full bg-[#C5A059]/20 group-hover:bg-[#D4AF37] transition-colors duration-300"></div>
                       
                       <div className="pl-2">
                         {isAdmin && (
-                          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1 bg-white/60 dark:bg-slate-900/60 p-1 rounded-xl backdrop-blur-md shadow-sm border border-[#C5A059]/20">
+                          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1 bg-white/60 dark:bg-slate-900/60 p-1 rounded-xl backdrop-blur-md max-md:backdrop-blur-none shadow-sm border border-[#C5A059]/20">
                             <button 
                               onClick={(e) => openQuizEditor(quiz, e)}
                               className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-all"
@@ -2330,7 +2330,7 @@ The JSON must exactly follow this schema:
             <ChevronLeft className="w-4 h-4" /> Back to Dashboard
           </button>
 
-          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md mb-8">
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none mb-8">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
               <Edit3 className="w-6 h-6 text-[#C5A059]" />
@@ -2605,7 +2605,7 @@ The JSON must exactly follow this schema:
           <ChevronLeft className="w-4 h-4" /> Back to Dashboard
         </button>
 
-        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
           <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-3 flex items-center gap-3 font-bold">
             <FileText className="w-6 h-6 text-[#C5A059]" /> Import Academic Assessment
@@ -2673,7 +2673,7 @@ The JSON must exactly follow this schema:
           <ChevronLeft className="w-4 h-4" /> Back to Dashboard
         </button>
 
-        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-emerald-400"></div>
           <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-8">
             <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500">
@@ -2728,7 +2728,7 @@ The JSON must exactly follow this schema:
           <ChevronLeft className="w-4 h-4" /> Back to Dashboard
         </button>
 
-        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <h2 className="text-2xl font-serif dark:text-white text-slate-900 font-bold">AI Exam Prompts</h2>
@@ -2882,7 +2882,7 @@ The JSON must exactly follow this schema:
                 bgClass = "bg-[#C5A059]/15";
                 textClass = "text-[#D4AF37] font-extrabold";
               } else if (!hasAnswered) {
-                bgClass = "bg-white/20 dark:bg-slate-900/40 backdrop-blur-md";
+                bgClass = "bg-white/20 dark:bg-slate-900/40 backdrop-blur-md max-md:backdrop-blur-none";
                 textClass = "text-slate-500 dark:text-slate-400 hover:text-[#D4AF37]";
               } else if (isCorrect) {
                 bgClass = "bg-emerald-500/10";
@@ -2911,7 +2911,7 @@ The JSON must exactly follow this schema:
           </div>
 
           {/* Interactive Card containing questions and options */}
-          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-10 shadow-lg relative overflow-hidden backdrop-blur-md">
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-10 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
             <div className="flex justify-between items-start gap-4 mb-8">
               <div className="flex-grow">
                 {currentIsEssay && (
@@ -3063,7 +3063,7 @@ The JSON must exactly follow this schema:
                     btnClass += "border-rose-500 bg-rose-500/10 text-rose-800 dark:text-rose-300 shadow-md"; 
                   } else {
                     // RESOLVING image_870832.png: Translucent backdrop but keeping options fully readable (slate color weight)
-                    btnClass += "border-[#C5A059]/15 bg-white/5 dark:bg-slate-950/20 text-slate-700 dark:text-slate-350 opacity-90 backdrop-blur-sm cursor-not-allowed"; 
+                    btnClass += "border-[#C5A059]/15 bg-white/5 dark:bg-slate-950/20 text-slate-700 dark:text-slate-350 opacity-90 backdrop-blur-sm max-md:backdrop-blur-none cursor-not-allowed"; 
                   }
                 }
 
@@ -3200,7 +3200,7 @@ The JSON must exactly follow this schema:
       <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
         <div>
           {/* Completion Metrics Score Card */}
-          <div className="text-center mb-10 bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+          <div className="text-center mb-10 bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
             <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#C5A059] via-[#D4AF37] to-[#C5A059]"></div>
             <Award className="w-16 h-16 mx-auto text-[#D4AF37] mb-4" />
             <h2 className="text-3xl font-serif dark:text-white text-slate-900 mb-2 font-bold tracking-wide">Assessment Completed</h2>
@@ -3232,7 +3232,7 @@ The JSON must exactly follow this schema:
                 // Essay mistakes show the concealed model answer and the student's own verdict.
                 if (item.isEssay) {
                   return (
-                    <div key={idx} className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 p-6 rounded-2xl relative overflow-hidden shadow-sm backdrop-blur-md">
+                    <div key={idx} className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 p-6 rounded-2xl relative overflow-hidden shadow-sm backdrop-blur-md max-md:backdrop-blur-none">
                       <div className={`absolute top-0 left-0 w-1.5 h-full ${item.isUncertain ? 'bg-amber-500' : 'bg-rose-500'}`}></div>
 
                       <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-5 pl-2">
@@ -3295,7 +3295,7 @@ The JSON must exactly follow this schema:
                 }
 
                 return (
-                  <div key={idx} className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 p-6 rounded-2xl relative overflow-hidden shadow-sm backdrop-blur-md">
+                  <div key={idx} className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 p-6 rounded-2xl relative overflow-hidden shadow-sm backdrop-blur-md max-md:backdrop-blur-none">
                     <div className={`absolute top-0 left-0 w-1.5 h-full ${item.isUncertain ? 'bg-amber-500' : 'bg-rose-500'}`}></div>
                     
                     <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-5 pl-2">
@@ -3386,7 +3386,7 @@ The JSON must exactly follow this schema:
           )}
 
           {/* Correct but uncertain answers toggler */}
-          <div className="mt-10 bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl overflow-hidden shadow-sm backdrop-blur-md">
+          <div className="mt-10 bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl overflow-hidden shadow-sm backdrop-blur-md max-md:backdrop-blur-none">
             <button 
               onClick={() => setCorrectUncertainOpen(!correctUncertainOpen)}
               className="w-full flex justify-between items-center p-5 hover:bg-[#C5A059]/10 transition-colors duration-300"
@@ -3588,7 +3588,7 @@ The JSON must exactly follow this schema:
         ) : (
           <div className="space-y-3">
             {rootTrashedGroups.map(g => (
-              <div key={'trash-folder-' + idKey(g.id)} className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md border border-[#C5A059]/20 rounded-2xl p-5 flex items-center gap-4">
+              <div key={'trash-folder-' + idKey(g.id)} className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md max-md:backdrop-blur-none border border-[#C5A059]/20 rounded-2xl p-5 flex items-center gap-4">
                 <div className="w-11 h-11 rounded-xl bg-[#C5A059]/10 flex items-center justify-center flex-shrink-0">
                   <Folder className="w-5 h-5 text-[#C5A059]" />
                 </div>
@@ -3619,7 +3619,7 @@ The JSON must exactly follow this schema:
             ))}
 
             {standaloneQuizzes.map(q => (
-              <div key={'trash-quiz-' + idKey(q.id)} className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md border border-[#C5A059]/20 rounded-2xl p-5 flex items-center gap-4">
+              <div key={'trash-quiz-' + idKey(q.id)} className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md max-md:backdrop-blur-none border border-[#C5A059]/20 rounded-2xl p-5 flex items-center gap-4">
                 <div className="w-11 h-11 rounded-xl bg-[#C5A059]/10 flex items-center justify-center flex-shrink-0">
                   <FileText className="w-5 h-5 text-[#C5A059]" />
                 </div>
@@ -3663,7 +3663,7 @@ The JSON must exactly follow this schema:
             <ChevronLeft className="w-4 h-4" /> Back to Dashboard
           </button>
 
-          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-rose-500/30 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md">
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-rose-500/30 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-500 to-rose-400"></div>
             <h2 className="text-2xl font-serif dark:text-white text-slate-900 mb-6 flex items-center gap-3 font-bold">
               <Flag className="w-6 h-6 text-rose-500" /> User Reports
@@ -3880,8 +3880,8 @@ The JSON must exactly follow this schema:
       {/* ADMIN QUIZ MOVE LOCATION MODAL */}
       {/* ========================================== */}
       {showMoveQuizModal && quizToMove && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+        <div className="fixed inset-0 bg-slate-950/60 max-md:bg-slate-950/80 max-md:backdrop-blur-none backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
               <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
@@ -3936,8 +3936,8 @@ The JSON must exactly follow this schema:
       {/* ADMIN LOGIN MODAL */}
       {/* ========================================== */}
       {showAdminLoginModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+        <div className="fixed inset-0 bg-slate-950/60 max-md:bg-slate-950/80 max-md:backdrop-blur-none backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
               <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
@@ -4013,8 +4013,8 @@ The JSON must exactly follow this schema:
       {/* SUBGROUP CREATION MODAL */}
       {/* ========================================== */}
       {showGroupModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+        <div className="fixed inset-0 bg-slate-950/60 max-md:bg-slate-950/80 max-md:backdrop-blur-none backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
               <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
@@ -4065,8 +4065,8 @@ The JSON must exactly follow this schema:
       {/* SAFE CONFIRMATION DIALOG MODAL */}
       {/* ========================================== */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+        <div className="fixed inset-0 bg-slate-950/60 max-md:bg-slate-950/80 max-md:backdrop-blur-none backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 border border-[#C5A059]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-4">
               <div className="p-2 rounded-lg bg-[#C5A059]/10 text-[#C5A059]">
@@ -4101,8 +4101,8 @@ The JSON must exactly follow this schema:
       {/* GLOBAL INBOX MODAL */}
       {/* ========================================== */}
       {showInboxModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-[#0d1321] border border-[#C5A059]/30 rounded-2xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl relative overflow-hidden backdrop-blur-md">
+        <div className="fixed inset-0 bg-slate-950/60 max-md:bg-slate-950/80 max-md:backdrop-blur-none backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-[#0d1321] border border-[#C5A059]/30 rounded-2xl max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
             <div className="flex items-center justify-between p-6 border-b border-[#C5A059]/20">
               <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800">
@@ -4167,8 +4167,8 @@ The JSON must exactly follow this schema:
       {/* REPORT QUESTION MODAL */}
       {/* ========================================== */}
       {showReportModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white dark:bg-[#0d1321] border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden backdrop-blur-md">
+        <div className="fixed inset-0 bg-slate-950/60 max-md:bg-slate-950/80 max-md:backdrop-blur-none backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white dark:bg-[#0d1321] border border-rose-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-rose-500 to-rose-400"></div>
             <div className="flex items-center gap-3 dark:text-slate-200 text-slate-800 mb-6">
               <div className="p-2 rounded-lg bg-rose-500/10 text-rose-500">
