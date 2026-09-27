@@ -2126,17 +2126,22 @@ The JSON must exactly follow this schema:
                       
                       <div className="pl-2">
                         {isAdmin && (
-                          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1 bg-white/60 dark:bg-slate-900/60 p-1 rounded-xl backdrop-blur-md max-md:backdrop-blur-none shadow-sm border border-[#C5A059]/20">
+                          // Tailwind emits group-hover: inside @media (hover:hover), and every
+                          // phone and tablet reports hover:none. That left these controls at
+                          // opacity-0 and permanently unreachable on touch, so an admin could
+                          // not edit, move or delete an assessment without a mouse. Keyed on
+                          // hover capability rather than width so touch tablets are covered too.
+                          <div className="absolute top-4 right-4 opacity-0 [@media(hover:none)]:opacity-100 group-hover:opacity-100 transition-opacity z-10 flex gap-1 bg-white/60 dark:bg-slate-900/60 p-1 rounded-xl backdrop-blur-md max-md:backdrop-blur-none shadow-sm border border-[#C5A059]/20">
                             <button 
                               onClick={(e) => openQuizEditor(quiz, e)}
-                              className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-all"
+                              className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-colors [@media(hover:none)]:p-3.5"
                               title="Edit Assessment"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
                             <button 
                               onClick={(e) => handleOpenMoveModal(quiz, e)}
-                              className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-[#D4AF37] hover:bg-[#C5A059]/10 transition-all"
+                              className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-[#D4AF37] hover:bg-[#C5A059]/10 transition-colors [@media(hover:none)]:p-3.5"
                               title="Move quiz folder location"
                             >
                               <Share2 className="w-4 h-4" />
@@ -2148,7 +2153,7 @@ The JSON must exactly follow this schema:
                             `Move "${quiz.quiz_title}" to the trash? You can restore it later from the Trash.`,
                             () => deleteQuiz(quiz.id)
                           );
-                            }} className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-all">
+                            }} className="p-1.5 rounded-lg dark:text-slate-400 text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors [@media(hover:none)]:p-3.5">
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
@@ -3807,7 +3812,7 @@ The JSON must exactly follow this schema:
             setLastInboxView(now);
             localStorage.setItem('sanctuaryLastInboxView', now);
           }}
-          className="relative p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm"
+          className="relative p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm max-md:p-3"
           title="Updates Inbox"
         >
           <Inbox className="w-5 h-5" />
@@ -3820,7 +3825,7 @@ The JSON must exactly follow this schema:
         </button>
         <button 
           onClick={toggleTheme}
-          className="p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm"
+          className="p-2.5 rounded-full hover:bg-[#C5A059]/10 transition-colors border border-[#C5A059]/20 text-slate-600 dark:text-slate-300 shadow-sm bg-white/20 dark:bg-slate-900/30 backdrop-blur-sm max-md:p-3"
           title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
         >
           {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
