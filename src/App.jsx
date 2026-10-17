@@ -1,4 +1,4 @@
-﻿/* eslint-disable react-hooks/refs */
+/* eslint-disable react-hooks/refs */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   BookOpen, 
@@ -1848,10 +1848,6 @@ The JSON must exactly follow this schema:
           <span className="text-[10px] uppercase tracking-widest text-slate-400 font-sans">Designed & Developed by</span>
           <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider text-sm transition-colors duration-300">
             Ahmed Falah Hasan
-          </span>
-          <span className="text-[9px] uppercase tracking-widest text-slate-400 font-sans mt-2">Inspiration by</span>
-          <span className="font-semibold text-[#C5A059] dark:text-[#D4AF37] tracking-wider text-xs transition-colors duration-300">
-            Rawan Husien
           </span>
         </div>
       </div>
