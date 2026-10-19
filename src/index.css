@@ -21,3 +21,9 @@ border-radius: 4px;
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
 background: #D4AF37;
 }
+
+/* Arabic typography styling: preserve cursive glyph connection by forcing normal letter-spacing */
+.font-arabic {
+  font-family: 'Amiri', 'Traditional Arabic', 'Scheherazade New', serif;
+  letter-spacing: normal !important;
+}

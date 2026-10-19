@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/refs */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   BookOpen, 
@@ -197,8 +196,12 @@ export default function App() {
   // Analytics State
   const [analyticsData, setAnalyticsData] = useState({ visits: 0, totalUsers: 0, totalQuizzesTaken: 0, completedQuizzes: 0 });
 
-  // Prompt View State
-  const [promptTab, setPromptTab] = useState('new'); // 'new' or 'format'
+  // Prompt & Translator View State
+  const [promptCategory, setPromptCategory] = useState('mcq'); // 'mcq', 'essay', or 'translator'
+  const [promptTab, setPromptTab] = useState('new'); // 'new', 'format', or 'tool'
+  const [translatorInput, setTranslatorInput] = useState('');
+  const [translatorOutput, setTranslatorOutput] = useState('');
+  const [translatorError, setTranslatorError] = useState('');
 
   // Move Quiz Modal State
   const [showMoveQuizModal, setShowMoveQuizModal] = useState(false);
@@ -591,10 +594,7 @@ export default function App() {
     }
   }, [currentView, isAdmin, isSupabaseLoaded]);
 
-  // These three are ~5KB of static template text with no state references whatsoever
-  // (the only interpolation is essaySchemaNote). Built in the component body they
-  // re-ran their string concatenation on every single state change, whether or not the
-  // prompt view was open. Memoised with empty deps, so each is built once per mount.
+  // These static prompt templates are memoized so string concatenation does not re-run on every state change.
   const essaySchemaNote = useMemo(() => `
 
 ESSAY QUESTION SUPPORT:
@@ -626,12 +626,16 @@ I have uploaded two types of sources into this notebook:
 1. My Lecture Notes (the specific material I have been taught)
 2. Past Year Questions (PYQs)
 
-Your task is to generate a 20-question Multiple Choice Question (MCQ) practice exam for me. To do this successfully, you must strictly follow these rules:
+Your task is to generate a comprehensive Multiple Choice Question (MCQ) practice exam for me. Do NOT restrict yourself to an arbitrary question count; the total number of questions must naturally adapt to thoroughly cover all key concepts, mechanisms, principles, and nuances in the uploaded Lecture Notes without leaving gaps or creating redundant filler.
+
+To do this successfully, you must strictly follow these rules:
 
 1. Strict Scope Constraint: Every single question you generate must be based ONLY on concepts explicitly explained in the uploaded Lecture Notes. If a topic appears in the PYQs but is NOT present in the Lecture Notes, you must completely ignore it.
-2. Format & Style Match: Analyze the provided PYQs to understand the exact formatting, phrasing style, number of options (e.g., A, B, C, D), and difficulty level.
-3. Mixing Past Questions: You can include or closely adapt actual questions from the PYQs, but ONLY if they align with the current Lecture Notes. 
-4. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
+2. Comprehensive Coverage: Scale the number of questions to match the depth and breadth of the material. Dense or multi-topic lectures should yield as many questions as necessary to test every core concept.
+3. Format & Style Match: Analyze the provided PYQs to understand the exact formatting, phrasing style, number of options (e.g., A, B, C, D), and difficulty level.
+4. Mixing Past Questions: You can include or closely adapt actual questions from the PYQs, but ONLY if they align with the current Lecture Notes.
+5. In-Depth Explanations: Every single option (both correct and incorrect) must have a meaningful explanation explaining WHY it is right or wrong.
+6. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
 
 The JSON must exactly follow this schema:
 
@@ -655,7 +659,7 @@ The JSON must exactly follow this schema:
   const aiPromptFormat = useMemo(() => `You are acting as an expert university professor and exam designer.
 
 I have uploaded an existing test or set of raw questions.
-Your task is to properly format this test into a clean JSON structure and add detailed explanations for every correct and incorrect option.
+Your task is to properly format this entire test into a clean JSON structure, fully adapting to whatever number of questions is present in the source material, and add detailed explanations for every correct and incorrect option.
 
 Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
 
@@ -677,6 +681,174 @@ The JSON must exactly follow this schema:
     }
   ]
 }${essaySchemaNote}`, [essaySchemaNote]);
+
+  const aiPromptEssayNew = useMemo(() => `You are acting as an expert university professor and exam designer.
+
+I have uploaded two types of sources into this notebook:
+1. My Lecture Notes (the specific material I have been taught)
+2. Past Year Questions (PYQs)
+
+Your task is to generate a comprehensive, self-graded Essay (Written / Long-Answer) practice exam for me. Do NOT restrict yourself to an arbitrary question count; the total number of questions must naturally adapt to thoroughly cover all major theoretical foundations, mechanisms, problem-solving procedures, and analytical discussions present in the uploaded Lecture Notes.
+
+To do this successfully, you must strictly follow these rules:
+
+1. Strict Scope Constraint: Every question must test concepts explicitly taught in the uploaded Lecture Notes.
+2. Conceptual Depth & Analytical Rigor: Craft open-ended essay prompts that demand deep understanding, synthesis, and explanation (e.g., "Explain the detailed mechanism of...", "Compare and contrast...", "Derive and evaluate the implications of...").
+3. Standalone Model Answer ("answerText"): The student will solve this question on paper, unhide your answer, and self-assess. Therefore, "answerText" must be a complete, rigorous, authoritative model answer that provides the full explanation, necessary steps, and core definitions.
+4. Examiner Criteria ("explanation"): In "explanation", provide concise guidance highlighting essential keywords/concepts required for full marks, common student misconceptions, and grading tips.
+5. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
+
+The JSON must exactly follow this schema:
+
+{
+  "quizTitle": "Title of the Essay Exam Based on Topic",
+  "questions": [
+    {
+      "question": "Open-ended essay prompt requiring in-depth explanation...",
+      "type": "essay",
+      "answerText": "Complete, comprehensive, standalone model answer...",
+      "explanation": "Key grading points, required terminology, and common pitfalls.",
+      "options": [],
+      "imageUrl": ""
+    }
+  ]
+}`, []);
+
+  const aiPromptEssayFormat = useMemo(() => `You are acting as an expert university professor and exam designer.
+
+I have uploaded an existing set of written exam questions, essay prompts, or past paper long-answer questions.
+Your task is to properly format this entire assessment into a clean JSON structure, fully adapting to whatever number of questions is present in the source material, and write an authoritative, complete model answer and examiner grading criteria for every question.
+
+Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
+
+The JSON must exactly follow this schema:
+
+{
+  "quizTitle": "Formatted Essay Assessment Title",
+  "questions": [
+    {
+      "question": "The essay question prompt...",
+      "type": "essay",
+      "answerText": "Complete, comprehensive, standalone model answer...",
+      "explanation": "Key grading points, required terminology, and common pitfalls.",
+      "options": [],
+      "imageUrl": ""
+    }
+  ]
+}`, []);
+
+  const aiPromptJsonToEssay = useMemo(() => `You are acting as an expert university professor and academic evaluator.
+
+I have an existing exam in JSON format containing Multiple Choice Questions (MCQs) or objective questions.
+Your task is to TRANSLATE and ELEVATE these questions into high-yield, conceptual, self-graded Essay (Written) questions.
+
+Guidelines for Translation:
+1. Elevate Recognition to Synthesis: Transform factual, multiple-choice recall questions into open-ended, analytical essay questions that prompt the student to explain mechanisms, compare alternatives, or justify principles.
+2. Authoritative Model Answer ("answerText"): Synthesize a comprehensive model answer that fully explains the concept, incorporating the correct choice and the theoretical reasons behind it.
+3. Examiner Guidance ("explanation"): Provide concise evaluation criteria, essential technical terms, and common pitfalls to help the student self-assess accurately.
+4. Schema Requirements:
+   - "type": "essay"
+   - "options": [] (must be an empty array)
+   - "answerText": full model answer string
+   - "explanation": grading guidance string
+   - Preserve existing "imageUrl" if present
+5. Output Format: You MUST output the final quiz STRICTLY as a raw JSON object. Do not include markdown formatting (like \`\`\`json).
+
+The JSON must exactly follow this schema:
+
+{
+  "quizTitle": "Elevated Essay Assessment",
+  "questions": [
+    {
+      "question": "Transformed analytical essay question...",
+      "type": "essay",
+      "answerText": "Comprehensive, standalone model answer...",
+      "explanation": "Key grading points, core concepts, and common pitfalls.",
+      "options": [],
+      "imageUrl": ""
+    }
+  ]
+}`, []);
+
+  // In-app deterministic JSON-to-Essay translator helper
+  const translateJsonToEssay = useCallback((rawInput) => {
+    let cleaned = rawInput.trim();
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+    }
+    
+    const parsed = JSON.parse(cleaned);
+
+    const convertQuestion = (q) => {
+      if (isEssayQuestion(q)) {
+        return {
+          question: q.question || '',
+          type: 'essay',
+          answerText: q.answerText || '',
+          explanation: q.explanation || '',
+          options: [],
+          imageUrl: q.imageUrl || ''
+        };
+      }
+
+      const options = Array.isArray(q.options) ? q.options : [];
+      const correctOpt = options.find(o => o.isCorrect) || options[0];
+      
+      const answerParts = [];
+      if (correctOpt) {
+        if (correctOpt.text) answerParts.push(correctOpt.text);
+        if (correctOpt.explanation) answerParts.push(correctOpt.explanation);
+      }
+      
+      const otherNotes = options
+        .filter(o => !o.isCorrect && o.explanation)
+        .map(o => `• Not ${o.id ? o.id + ': ' : ''}${o.explanation}`);
+
+      let explanationText = q.explanation || '';
+      if (otherNotes.length > 0) {
+        explanationText = explanationText 
+          ? `${explanationText}\n\nDistinctions:\n${otherNotes.join('\n')}`
+          : `Key Distinctions:\n${otherNotes.join('\n')}`;
+      }
+
+      return {
+        question: q.question || '',
+        type: 'essay',
+        answerText: answerParts.join('\n\n') || 'Model answer not designated.',
+        explanation: explanationText,
+        options: [],
+        imageUrl: q.imageUrl || ''
+      };
+    };
+
+    if (parsed.quizzes && typeof parsed.quizzes === 'object' && !Array.isArray(parsed.quizzes)) {
+      const convertedBulk = { quizzes: {} };
+      for (const key of Object.keys(parsed.quizzes)) {
+        const item = parsed.quizzes[key];
+        convertedBulk.quizzes[key] = {
+          quizTitle: item.quizTitle || key,
+          questions: (item.questions || []).map(convertQuestion)
+        };
+      }
+      return JSON.stringify(convertedBulk, null, 2);
+    } else if (parsed.quizTitle && Array.isArray(parsed.questions)) {
+      const convertedSingle = {
+        quizTitle: parsed.quizTitle,
+        questions: parsed.questions.map(convertQuestion)
+      };
+      return JSON.stringify(convertedSingle, null, 2);
+    } else if (Array.isArray(parsed)) {
+      const convertedList = {
+        quizTitle: 'Converted Essay Assessment',
+        questions: parsed.map(convertQuestion)
+      };
+      return JSON.stringify(convertedList, null, 2);
+    } else {
+      throw new Error("Unrecognized JSON format. Expected a single quiz { quizTitle, questions }, bulk quizzes { quizzes: { ... } }, or questions array.");
+    }
+  }, []);
 
   const handleCreateGroup = async () => {
     if (!newGroupName.trim()) return;
@@ -995,11 +1167,21 @@ The JSON must exactly follow this schema:
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
-  const copyToClipboard = () => {
-    const textToCopy = promptTab === 'new' ? aiPrompt : aiPromptFormat;
+  const getActivePromptText = useCallback(() => {
+    if (promptCategory === 'mcq') {
+      return promptTab === 'new' ? aiPrompt : aiPromptFormat;
+    } else if (promptCategory === 'essay') {
+      return promptTab === 'new' ? aiPromptEssayNew : aiPromptEssayFormat;
+    } else {
+      return aiPromptJsonToEssay;
+    }
+  }, [promptCategory, promptTab, aiPrompt, aiPromptFormat, aiPromptEssayNew, aiPromptEssayFormat, aiPromptJsonToEssay]);
+
+  const copyToClipboard = (customText) => {
+    const textToCopy = typeof customText === 'string' ? customText : getActivePromptText();
     try {
       navigator.clipboard.writeText(textToCopy);
-      setCopySuccess('Prompt copied to clipboard!');
+      setCopySuccess('Copied to clipboard!');
       setTimeout(() => setCopySuccess(''), 3000);
     } catch {
       const textAreax = document.createElement("textarea");
@@ -1008,9 +1190,29 @@ The JSON must exactly follow this schema:
       textAreax.select();
       document.execCommand("copy");
       document.body.removeChild(textAreax);
-      setCopySuccess('Prompt copied!');
+      setCopySuccess('Copied!');
       setTimeout(() => setCopySuccess(''), 3000);
     }
+  };
+
+  const handleTranslateJson = () => {
+    try {
+      setTranslatorError('');
+      if (!translatorInput.trim()) {
+        setTranslatorError('Please paste your quiz JSON first.');
+        return;
+      }
+      const converted = translateJsonToEssay(translatorInput);
+      setTranslatorOutput(converted);
+    } catch (err) {
+      setTranslatorError(err.message || 'Failed to translate JSON to Essay format.');
+    }
+  };
+
+  const handleImportConverted = () => {
+    if (!translatorOutput.trim()) return;
+    setJsonInput(translatorOutput);
+    setCurrentView('add_quiz');
   };
 
   const handleAdminLogin = async (e) => {
@@ -1839,7 +2041,7 @@ The JSON must exactly follow this schema:
 
   const renderSignatureFooter = () => (
     <footer className="w-full text-center py-10 border-t border-[#C5A059]/20 mt-20 text-xs text-slate-500 font-serif">
-      <div className="flex flex-col items-center justify-center gap-3">
+      <div className="flex flex-col items-center justify-center gap-4">
         <span className="italic text-[#C5A059] font-semibold text-[13px] tracking-wide relative flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-[#D4AF37] animate-pulse" />
           Thanks to Allah for His Blessings
@@ -1849,6 +2051,24 @@ The JSON must exactly follow this schema:
           <span className="font-bold text-slate-700 dark:text-slate-300 tracking-wider text-sm transition-colors duration-300">
             Ahmed Falah Hasan
           </span>
+        </div>
+        <div className="flex flex-col items-center gap-1.5 pt-3 border-t border-[#C5A059]/15 max-w-md mx-auto">
+          <span className="text-[10px] uppercase tracking-widest text-slate-400 dark:text-slate-500 font-sans">
+            Special Thanks & Contributions • شكر وتقدير
+          </span>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-base text-slate-700 dark:text-slate-300 font-arabic" dir="rtl">
+            <span className="font-bold text-[#C5A059] dark:text-[#D4AF37] hover:brightness-110 transition-colors">
+              رحمة محمود شاكر
+            </span>
+            <span className="text-[#C5A059]/40 select-none">•</span>
+            <span className="font-bold text-[#C5A059] dark:text-[#D4AF37] hover:brightness-110 transition-colors">
+              ماريا جميل
+            </span>
+            <span className="text-[#C5A059]/40 select-none">•</span>
+            <span className="font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
+              و أخرون
+            </span>
+          </div>
         </div>
       </div>
     </footer>
@@ -2768,64 +2988,255 @@ The JSON must exactly follow this schema:
     </div>
   );
 
-  const renderPrompt = () => (
-    <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
-      <div>
-        <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
-          <ChevronLeft className="w-4 h-4" /> Back to Dashboard
-        </button>
+  const renderPrompt = () => {
+    const isTranslatorTool = promptCategory === 'translator' && promptTab === 'tool';
+    const activePromptText = getActivePromptText();
 
-        <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-            <h2 className="text-2xl font-serif dark:text-white text-slate-900 font-bold">AI Exam Prompts</h2>
-            <button 
-              onClick={copyToClipboard}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-[#C5A059]/10 border border-[#C5A059]/30 text-slate-700 dark:text-slate-200 hover:bg-[#C5A059]/25 transition-all duration-300 rounded-xl text-xs font-bold shadow-sm"
-            >
-              <Copy className="w-4 h-4 text-[#C5A059]" /> {copySuccess || 'Copy Prompt'}
-            </button>
-          </div>
-          
-          <div className="flex gap-2 mb-6 p-1 bg-white/20 dark:bg-slate-900/40 rounded-xl max-w-sm">
-            <button
-              onClick={() => setPromptTab('new')}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
-                promptTab === 'new' 
-                  ? 'bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] shadow-md' 
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
-              }`}
-            >
-              Generate New Exam
-            </button>
-            <button
-              onClick={() => setPromptTab('format')}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${
-                promptTab === 'format' 
-                  ? 'bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] shadow-md' 
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
-              }`}
-            >
-              Format Existing Test
-            </button>
-          </div>
+    const descriptionText = (() => {
+      if (promptCategory === 'mcq') {
+        return promptTab === 'new'
+          ? "Copy this instructional prompt and provide it to your preferred AI model along with your lecture notes. The AI will dynamically generate as many MCQ questions as necessary to comprehensively cover your material without artificial limits."
+          : "Copy this instructional prompt and provide it to your preferred AI model along with a raw test or list of questions to format them cleanly into the MCQ JSON structure with explanations.";
+      }
+      if (promptCategory === 'essay') {
+        return promptTab === 'new'
+          ? "Copy this instructional prompt and provide it to your preferred AI model along with your lecture notes. The AI will generate open-ended, self-graded Essay questions complete with authoritative standalone model answers and examiner criteria, scaling question count naturally to the material."
+          : "Copy this instructional prompt and provide it to your preferred AI model along with an existing written test or list of essay prompts to format them cleanly into self-graded essay JSON.";
+      }
+      return promptTab === 'new'
+        ? "Copy this instructional prompt and feed it to your preferred AI model along with your existing MCQ or raw test JSON. The AI will conceptually elevate and rewrite the questions into rigorous, self-graded essay prompts with complete model answers."
+        : "Paste your existing MCQ JSON quiz below to instantly convert it into Scholar's Sanctuary self-graded Essay JSON schema with zero AI wait time.";
+    })();
 
-          <p className="dark:text-slate-400 text-slate-600 mb-6 border-b border-slate-200/55 dark:border-slate-800/80 pb-6 text-sm">
-            {promptTab === 'new' 
-              ? "Copy this instructional prompt and provide it to your preferred AI model along with your lecture notes."
-              : "Copy this instructional prompt and provide it to your preferred AI model along with a raw test or list of questions."}
-          </p>
+    return (
+      <div className="w-full max-w-4xl mx-auto animate-fade-in px-4 flex flex-col min-h-[85vh] justify-between">
+        <div>
+          <button onClick={() => setCurrentView('dashboard')} className="flex items-center gap-2 dark:text-slate-400 text-slate-500 hover:text-[#D4AF37] mb-8 transition-colors duration-300 font-bold text-sm">
+            <ChevronLeft className="w-4 h-4" /> Back to Dashboard
+          </button>
 
-          <div className="bg-white/10 dark:bg-slate-950/30 border border-[#C5A059]/20 p-6 rounded-xl overflow-y-auto max-h-[50vh] custom-scrollbar shadow-inner">
-            <pre className="dark:text-slate-300 text-slate-700 font-mono text-xs md:text-sm whitespace-pre-wrap leading-relaxed select-all">
-              {promptTab === 'new' ? aiPrompt : aiPromptFormat}
-            </pre>
+          <div className="bg-white/40 dark:bg-[#0d1321]/80 border border-[#C5A059]/25 rounded-2xl p-6 md:p-8 shadow-lg relative overflow-hidden backdrop-blur-md max-md:backdrop-blur-none">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#C5A059] to-[#D4AF37]"></div>
+            
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+              <div>
+                <h2 className="text-2xl font-serif dark:text-white text-slate-900 font-bold">AI Exam Prompts & Translator</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Dynamic question sizing based on source material • MCQ, Essay, & JSON Translator
+                </p>
+              </div>
+              {!isTranslatorTool && (
+                <button 
+                  onClick={() => copyToClipboard()}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-[#C5A059]/10 border border-[#C5A059]/30 text-slate-700 dark:text-slate-200 hover:bg-[#C5A059]/25 transition-all duration-300 rounded-xl text-xs font-bold shadow-sm"
+                >
+                  <Copy className="w-4 h-4 text-[#C5A059]" /> {copySuccess || 'Copy Prompt'}
+                </button>
+              )}
+            </div>
+
+            {/* Top Category Tabs: MCQ vs Essay vs Translator */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-6 p-1.5 bg-white/20 dark:bg-slate-900/50 border border-[#C5A059]/20 rounded-xl">
+              <button
+                onClick={() => {
+                  setPromptCategory('mcq');
+                  if (promptTab === 'tool') setPromptTab('new');
+                }}
+                className={`flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-bold rounded-lg transition-all ${
+                  promptCategory === 'mcq'
+                    ? 'bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] shadow-md'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+                }`}
+              >
+                <BookOpenCheck className="w-4 h-4" /> Multiple Choice (MCQ)
+              </button>
+
+              <button
+                onClick={() => {
+                  setPromptCategory('essay');
+                  if (promptTab === 'tool') setPromptTab('new');
+                }}
+                className={`flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-bold rounded-lg transition-all ${
+                  promptCategory === 'essay'
+                    ? 'bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] shadow-md'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+                }`}
+              >
+                <PenLine className="w-4 h-4" /> Essay Questions
+              </button>
+
+              <button
+                onClick={() => {
+                  setPromptCategory('translator');
+                  if (promptTab !== 'tool' && promptTab !== 'new') setPromptTab('new');
+                }}
+                className={`flex items-center justify-center gap-2 py-2.5 px-3 text-xs sm:text-sm font-bold rounded-lg transition-all ${
+                  promptCategory === 'translator'
+                    ? 'bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] shadow-md'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Sparkles className="w-4 h-4" /> JSON ➔ Essay Translator
+              </button>
+            </div>
+
+            {/* Sub-tabs */}
+            <div className="flex gap-2 mb-6 p-1 bg-white/20 dark:bg-slate-900/40 rounded-xl max-w-md">
+              {promptCategory !== 'translator' ? (
+                <>
+                  <button
+                    onClick={() => setPromptTab('new')}
+                    className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all ${
+                      promptTab === 'new' 
+                        ? 'bg-[#C5A059]/20 text-[#C5A059] dark:text-[#D4AF37] border border-[#C5A059]/30 shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {promptCategory === 'mcq' ? 'Generate New MCQ Exam' : 'Generate New Essay Exam'}
+                  </button>
+                  <button
+                    onClick={() => setPromptTab('format')}
+                    className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all ${
+                      promptTab === 'format' 
+                        ? 'bg-[#C5A059]/20 text-[#C5A059] dark:text-[#D4AF37] border border-[#C5A059]/30 shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {promptCategory === 'mcq' ? 'Format Existing MCQ Test' : 'Format Existing Essay Test'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setPromptTab('new')}
+                    className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all ${
+                      promptTab === 'new' 
+                        ? 'bg-[#C5A059]/20 text-[#C5A059] dark:text-[#D4AF37] border border-[#C5A059]/30 shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    AI Prompt Translator
+                  </button>
+                  <button
+                    onClick={() => setPromptTab('tool')}
+                    className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all ${
+                      promptTab === 'tool' 
+                        ? 'bg-[#C5A059]/20 text-[#C5A059] dark:text-[#D4AF37] border border-[#C5A059]/30 shadow-sm' 
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-white/30 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    Instant Converter Tool
+                  </button>
+                </>
+              )}
+            </div>
+
+            <p className="dark:text-slate-400 text-slate-600 mb-6 border-b border-slate-200/55 dark:border-slate-800/80 pb-4 text-xs sm:text-sm leading-relaxed">
+              {descriptionText}
+            </p>
+
+            {/* Display Either Prompt Code Block or Instant Converter Tool */}
+            {!isTranslatorTool ? (
+              <div className="bg-white/10 dark:bg-slate-950/30 border border-[#C5A059]/20 p-6 rounded-xl overflow-y-auto max-h-[50vh] custom-scrollbar shadow-inner">
+                <pre className="dark:text-slate-300 text-slate-700 font-mono text-xs md:text-sm whitespace-pre-wrap leading-relaxed select-all">
+                  {activePromptText}
+                </pre>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Left: Input */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 font-mono">
+                        Source MCQ JSON (Single or Bulk)
+                      </label>
+                      {translatorInput && (
+                        <button
+                          onClick={() => {
+                            setTranslatorInput('');
+                            setTranslatorOutput('');
+                            setTranslatorError('');
+                          }}
+                          className="text-[10px] text-rose-500 hover:underline font-mono"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      value={translatorInput}
+                      onChange={(e) => setTranslatorInput(e.target.value)}
+                      placeholder='Paste existing MCQ JSON payload here...'
+                      className="w-full h-72 bg-white/20 dark:bg-slate-950/40 border border-[#C5A059]/30 rounded-xl p-3 dark:text-slate-300 text-slate-800 font-mono text-xs focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37] transition-all resize-none shadow-inner"
+                    />
+                  </div>
+
+                  {/* Right: Output */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-wider text-[#D4AF37] font-mono">
+                        Translated Essay JSON
+                      </label>
+                      {translatorOutput && (
+                        <span className="text-[10px] text-emerald-500 font-mono font-bold flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Ready
+                        </span>
+                      )}
+                    </div>
+                    <textarea
+                      readOnly
+                      value={translatorOutput}
+                      placeholder='Translated self-graded Essay JSON will appear here...'
+                      className="w-full h-72 bg-white/10 dark:bg-slate-950/20 border border-[#C5A059]/20 rounded-xl p-3 dark:text-slate-300 text-slate-700 font-mono text-xs focus:outline-none transition-all resize-none shadow-inner select-all"
+                    />
+                  </div>
+                </div>
+
+                {translatorError && (
+                  <div className="p-4 bg-red-500/10 border border-red-500/25 text-red-600 dark:text-red-400 rounded-xl flex items-start gap-3 animate-fade-in text-xs font-semibold">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <p>{translatorError}</p>
+                  </div>
+                )}
+
+                {/* Translator Actions */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-[#C5A059]/20">
+                  <button
+                    onClick={handleTranslateJson}
+                    disabled={!translatorInput.trim()}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-[#C5A059] to-[#D4AF37] text-[#0B0F19] hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition-all font-bold text-xs shadow-md"
+                  >
+                    <Sparkles className="w-4 h-4" /> Translate to Essay Format
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    {translatorOutput && (
+                      <>
+                        <button
+                          onClick={() => copyToClipboard(translatorOutput)}
+                          className="flex items-center gap-1.5 px-4 py-2.5 border border-[#C5A059]/30 text-slate-700 dark:text-slate-200 hover:bg-[#C5A059]/15 rounded-xl transition-all text-xs font-bold shadow-sm"
+                        >
+                          <Copy className="w-3.5 h-3.5 text-[#C5A059]" /> Copy Translated JSON
+                        </button>
+                        <button
+                          onClick={handleImportConverted}
+                          className="flex items-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all text-xs font-bold shadow-sm"
+                        >
+                          <Upload className="w-3.5 h-3.5" /> Load into Assessment Importer
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
+        {renderSignatureFooter()}
       </div>
-      {renderSignatureFooter()}
-    </div>
-  );
+    );
+  };
 
   const renderTakingQuiz = () => {
     if (!activeQuiz) return null;
